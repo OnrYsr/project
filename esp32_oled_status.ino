@@ -156,32 +156,71 @@ float readPhValue(float &phAdcOut, float &phVoltageOut) {
 }
 
 void handleRoot() {
+  String view = server.hasArg("view") ? server.arg("view") : "normal";
+  view.toLowerCase();
+  bool webDebug = (view == "debug");
+  int refreshSec = webDebug ? 1 : 3;
+  String viewNext = webDebug ? "debug" : "normal";
+
   String html;
-  html.reserve(900);
+  html.reserve(2200);
   html += F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
   html += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-  html += F("<meta http-equiv=\"refresh\" content=\"5\">");
+  html += F("<meta http-equiv=\"refresh\" content=\"");
+  html += String(refreshSec);
+  html += F(";url=/?view=");
+  html += viewNext;
+  html += F("\">");
   html += F("<title>Hydro Monitor</title>");
-  html += F("<style>body{font-family:system-ui,sans-serif;margin:1.2rem;background:#0f172a;color:#e2e8f0;}");
-  html += F("h1{font-size:1.25rem;margin:0 0 1rem;}table{border-collapse:collapse;width:100%;max-width:28rem;}");
-  html += F("td{padding:0.45rem 0.5rem;border-bottom:1px solid #334155;}");
-  html += F("td:first-child{color:#94a3b8;} .ok{color:#4ade80;} .bad{color:#f87171;}</style></head><body>");
-  html += F("<h1>Su monitor</h1>");
-  html += F("<p>");
-  if (g_wifiOk) {
-    html += F("<span class=\"ok\">WiFi bagli</span>");
+  html += F("<style>");
+  html += F("body{font-family:system-ui,sans-serif;margin:1rem;background:#0f172a;color:#e2e8f0;max-width:22rem;}");
+  html += F(".nav{display:flex;gap:0.5rem;margin-bottom:1rem;}");
+  html += F(".nav a{flex:1;text-align:center;padding:0.55rem 0.4rem;border-radius:0.5rem;text-decoration:none;font-weight:600;font-size:0.9rem;}");
+  html += F(".nav a.on{background:#3b82f6;color:#fff;}");
+  html += F(".nav a.off{background:#334155;color:#cbd5e1;}");
+  html += F(".ok{color:#4ade80;font-size:0.8rem;margin-bottom:0.75rem;} .bad{color:#f87171;font-size:0.8rem;margin-bottom:0.75rem;}");
+  html += F(".n-ph{font-size:1.85rem;font-weight:700;margin:0.35rem 0 0.15rem;} .n-ec{font-size:1.85rem;font-weight:700;margin:0.35rem 0;}");
+  html += F(".n-lab{color:#94a3b8;font-size:0.95rem;}");
+  html += F(".d-row{margin:0.35rem 0;font-size:1rem;line-height:1.35;} .d-lab{color:#94a3b8;display:inline-block;min-width:4.2rem;}");
+  html += F(".hint{color:#64748b;font-size:0.78rem;margin-top:1rem;line-height:1.35;}");
+  html += F("</style></head><body>");
+
+  html += F("<div class=\"nav\">");
+  if (webDebug) {
+    html += F("<a class=\"off\" href=\"/?view=normal\">Normal</a>");
+    html += F("<a class=\"on\" href=\"/?view=debug\">Debug</a>");
   } else {
-    html += F("<span class=\"bad\">WiFi yok</span>");
+    html += F("<a class=\"on\" href=\"/?view=normal\">Normal</a>");
+    html += F("<a class=\"off\" href=\"/?view=debug\">Debug</a>");
   }
-  html += F("</p><table>");
-  html += F("<tr><td>pH</td><td>"); html += String(g_ph, 2); html += F("</td></tr>");
-  html += F("<tr><td>EC</td><td>"); html += String((int)g_ecUsCm); html += F(" uS/cm</td></tr>");
-  html += F("<tr><td>TDS</td><td>"); html += String((int)g_tdsPpm); html += F(" ppm</td></tr>");
-  html += F("<tr><td>RAW (TDS)</td><td>"); html += String((int)g_tdsRaw); html += F("</td></tr>");
-  html += F("<tr><td>Mod</td><td>"); html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL"); html += F("</td></tr>");
-  html += F("<tr><td>pH ADC / V</td><td>"); html += String((int)g_phAdc); html += F(" / "); html += String(g_phV, 3); html += F("</td></tr>");
-  html += F("<tr><td>TDS ADC / V</td><td>"); html += String(g_tdsAdc, 1); html += F(" / "); html += String(g_tdsV, 3); html += F("</td></tr>");
-  html += F("</table><p style=\"color:#64748b;font-size:0.85rem;margin-top:1rem;\">Sayfa 5 sn'de bir yenilenir.</p></body></html>");
+  html += F("</div>");
+
+  if (g_wifiOk) {
+    html += F("<div class=\"ok\">WiFi bagli</div>");
+  } else {
+    html += F("<div class=\"bad\">WiFi yok</div>");
+  }
+
+  if (!webDebug) {
+    html += F("<div class=\"n-lab\">pH</div>");
+    html += F("<div class=\"n-ph\">"); html += String(g_ph, 1); html += F("</div>");
+    html += F("<div class=\"n-lab\" style=\"margin-top:0.6rem;\">EC</div>");
+    html += F("<div class=\"n-ec\">"); html += String((int)g_ecUsCm); html += F(" uS/cm</div>");
+    html += F("<p class=\"hint\">OLED NORMAL gibi: pH + EC. Yenileme: 3 sn.</p>");
+  } else {
+    html += F("<div class=\"d-row\"><span class=\"d-lab\">RAW</span>"); html += String((int)g_tdsRaw); html += F("</div>");
+    html += F("<div class=\"d-row\"><span class=\"d-lab\">TDS</span>"); html += String((int)g_tdsPpm); html += F(" ppm</div>");
+    html += F("<div class=\"d-row\"><span class=\"d-lab\">EC</span>"); html += String((int)g_ecUsCm); html += F(" uS</div>");
+    html += F("<div class=\"d-row\"><span class=\"d-lab\">pH</span>"); html += String(g_ph, 2);
+    html += F(" <span style=\"color:#64748b;\">pA:</span> "); html += String((int)g_phAdc); html += F("</div>");
+    html += F("<div class=\"d-row\"><span class=\"d-lab\">pV</span>"); html += String(g_phV, 3); html += F("</div>");
+    html += F("<div class=\"d-row\" style=\"margin-top:0.5rem;color:#64748b;font-size:0.85rem;\">Cihaz OLED: ");
+    html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL");
+    html += F("</div>");
+    html += F("<p class=\"hint\">OLED DEBUG gibi. Yenileme: 1 sn.</p>");
+  }
+
+  html += F("</body></html>");
   server.send(200, "text/html", html);
 }
 

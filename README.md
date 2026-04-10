@@ -25,7 +25,10 @@ WiFi’yi acmak icin:
 
 Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klasoru olarak kullanin.
 - ESP32 acildiktan sonra WiFi'ye baglanir; Serial Monitor'da `Web: http://...` IP adresini gorursunuz.
-- Ayni WiFi'deki telefon veya bilgisayardan bu IP'ye gidince basit bir ozet sayfa acilir (pH, EC, TDS, RAW, mod, ADC/voltaj). Sayfa yaklasik 5 saniyede bir yenilenir.
+- Ayni WiFi'deki telefon veya bilgisayardan bu IP'ye gidince web arayuzu acilir.
+- Ustte **Normal** / **Debug** butonlari vardir (OLED ekranina benzer icerik).
+  - Normal: sadece pH ve EC; sayfa **3 saniyede** bir yenilenir (`/?view=normal`).
+  - Debug: RAW, TDS, EC, pH, pA, pV; sayfa **1 saniyede** bir yenilenir (`/?view=debug`).
 
 Guvenlik: WiFi sifresini public repoya koymayin; `wifi_secrets.h` sadece kendi bilgisayarinizda kalsin.
 
