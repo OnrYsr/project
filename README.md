@@ -8,6 +8,13 @@ Bu proje ESP32 ile su kalitesi takibi yapar:
 
 Kod dosyasi: `esp32_oled_status.ino`
 
+## Surum notlari
+
+- **Saha duzeltmesi:** `/settings` sayfasinda pH ve EC icin olcek/ofset; `Preferences` (NVS) ile kalicidir. Buffer/TDS kalibrasyonundan bagimsiz ince ayar.
+- **Fabrika saha varsayilani:** Kodda `DEFAULT_PH_FIELD_*` ve `DEFAULT_EC_FIELD_*` — NVS’te `phs`/`pho`/`ecs`/`eco` hic yazilmamissa (veya fabrika sifirlama sonrasi) bu degerler otomatik kullanilir; web ayar formunda da varsayilan olarak gorunur.
+- **Serial:** Her ornekte `pH_kal` / `pH_saha`, `EC_kal` / `EC_saha` ayri yazilir (kalibrasyonlu ham ile ekranda kullanilan deger).
+- **Saha fabrika rakamlari** belirli bir rezervuar + el referans karsilastirmasindan turetilmistir; farkli prob veya ortamda `/settings` veya kod sabitlerini guncelleyin.
+
 ## WiFi ve web arayuzu
 
 - Varsayilan WiFi bilgileri `esp32_oled_status.ino` icinde (`#else` blogu) tanimlidir; sadece `.ino` kopyalasaniz da baglanir.
@@ -34,6 +41,7 @@ Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klas
 - Debug (web): RAW, TDS, EC, pH, pA, pV; **1 saniyede** bir yenilenir (`/?view=debug`). Sayfada OLED'in o anki modu da bilgi olarak gosterilir.
 - `Ayarlar/Kalibrasyon` sayfasi: `http://<ESP_IP>/settings`
   - pH kalibrasyon voltajlari (`ph4/ph7/ph10`)
+  - **Saha duzeltmesi:** pH ve EC icin `olcek` / `ofset` (besin suyu veya farkli ortamda buffer sonrasi ince ayar)
   - EC faktor (`uS/PPM`)
   - TDS `RAW -> PPM` noktalarini duzenleyip kaydetme
   - Kayitlar ESP32 NVS/Preferences'a yazilir, elektrik kesilse de korunur.
@@ -139,6 +147,22 @@ Model:
 
 Bu sayede 4, 7 ve 10 tamponlarinda daha dogru sonuc alinmistir.
 
+## Saha duzeltmesi (farkli ortam / besin suyu)
+
+Buffer ve TDS tablosu **referans suda** iyidir; **besin cozeltisi, sicaklik, elektriksel gurultu** veya **farkli kablo uzunlugu** yuzunden gercek ortamda el cihazina gore sabit sapma gorulebilir. Bunu her seferinde tampon kalibrasyonunu bozmadan duzeltmek icin ayarlarda **saha** katmani vardir:
+
+- `pH_saha = pH_kal * pH_olcek + pH_ofset` (sonuc 0–14 arasina sinirlanir)
+- `EC_saha = EC_kal * EC_olcek + EC_ofset` (uS/cm; negatif olmaz)
+
+**Tek nokta (pratik):** Olcekleri `1` birakin.
+
+- pH: El cihazi `pH_ref`, ESP (web/OLED) `pH_esp` ise `pH_ofset ≈ pH_ref - pH_esp`.
+- EC: `EC_olcek ≈ EC_ref / EC_esp` (ofset 0).
+
+Ayarlar: `/settings` altinda **Saha duzeltmesi** alanlari; NVS’e kaydolur. Serial logda `pH_kal` / `pH_saha` ve `EC_kal` / `EC_saha` ayri yazilir.
+
+**Kodda fabrika saha varsayilani** (`esp32_oled_status.ino` icinde `DEFAULT_PH_FIELD_*` / `DEFAULT_EC_FIELD_*`): el referans `pH 6`, `EC 1756 uS` ile ham ESP `~8.6 pH`, `~2382 uS` karsilastirmasindan — pH olcek `1`, ofset `-2.60`; EC olcek `1756/2382`, ofset `0`. Ilk kurulumda NVS’te bu anahtarlar yoksa ayar sayfasi ve olcum bu varsayilanlari kullanir. Daha once webden **Kaydet** yaptiysan NVS’teki degerler baskin kalir; kod varsayilanina donmek icin **Fabrika ayarlarina don** kullanilir.
+
 ## Gecmis Olcum Kayitlari
 
 ### Ilk TDS kalibrasyon ciftleri
@@ -180,9 +204,10 @@ Asagidaki degerler ayni suya kademeli besin eklenerek alinmistir:
 - `settings` sayfasindan degistirebilecegin alanlar:
   - `EC uS/PPM` faktor
   - `pH4`, `pH7`, `pH10` voltajlari
+  - Saha: `pH` / `EC` olcek ve ofset
   - 6 nokta `RAW` ve `PPM` TDS kalibrasyon tablosu
 - `settings` sayfasinda **Fabrika ayarlarina don** butonu vardir.
-  - Varsayilan kalibrasyon degerlerini geri yukler.
+  - Varsayilan kalibrasyon + saha duzeltmesi degerlerini (kodda tanimli) geri yukler.
   - Bu varsayilanlar NVS'e kaydedilir ve kalici olur.
 
 ## Derleme Notu

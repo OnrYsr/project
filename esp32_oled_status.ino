@@ -73,6 +73,11 @@ const float DEFAULT_EC_US_PER_PPM = 2.0;
 const float DEFAULT_PH_CAL_V4 = 3.300;
 const float DEFAULT_PH_CAL_V7 = 2.528;
 const float DEFAULT_PH_CAL_V10 = 2.012;
+// Saha düzeltmesi fabrika varsayilani (el referans: pH 6, EC 1756 uS; ham ESP ~8.6 / ~2382 uS)
+const float DEFAULT_PH_FIELD_SCALE = 1.0f;
+const float DEFAULT_PH_FIELD_OFFSET = -2.60f;
+const float DEFAULT_EC_FIELD_SCALE = 1756.0f / 2382.0f;
+const float DEFAULT_EC_FIELD_OFFSET = 0.0f;
 
 unsigned long lastUpdateMs = 0;
 unsigned long lastSampleMs = 0;
@@ -102,6 +107,11 @@ float cfgPhCalV7 = DEFAULT_PH_CAL_V7;
 float cfgPhCalV10 = DEFAULT_PH_CAL_V10;
 float cfgRawPoints[CAL_POINTS];
 float cfgPpmPoints[CAL_POINTS];
+// Saha düzeltmesi (besin/kabin suyu; buffer sonrasi ince ayar). ph' = ph * phs + pho, ec' = ec * ecs + eco
+float cfgPhScale = DEFAULT_PH_FIELD_SCALE;
+float cfgPhOffset = DEFAULT_PH_FIELD_OFFSET;
+float cfgEcScale = DEFAULT_EC_FIELD_SCALE;
+float cfgEcOffset = DEFAULT_EC_FIELD_OFFSET;
 
 static void loadSettings() {
   prefs.begin("hydro", true);
@@ -115,6 +125,10 @@ static void loadSettings() {
     cfgRawPoints[i] = prefs.getFloat(rk.c_str(), DEFAULT_RAW_POINTS[i]);
     cfgPpmPoints[i] = prefs.getFloat(pk.c_str(), DEFAULT_PPM_POINTS[i]);
   }
+  cfgPhScale = prefs.getFloat("phs", DEFAULT_PH_FIELD_SCALE);
+  cfgPhOffset = prefs.getFloat("pho", DEFAULT_PH_FIELD_OFFSET);
+  cfgEcScale = prefs.getFloat("ecs", DEFAULT_EC_FIELD_SCALE);
+  cfgEcOffset = prefs.getFloat("eco", DEFAULT_EC_FIELD_OFFSET);
   prefs.end();
 }
 
@@ -130,6 +144,10 @@ static void saveSettings() {
     prefs.putFloat(rk.c_str(), cfgRawPoints[i]);
     prefs.putFloat(pk.c_str(), cfgPpmPoints[i]);
   }
+  prefs.putFloat("phs", cfgPhScale);
+  prefs.putFloat("pho", cfgPhOffset);
+  prefs.putFloat("ecs", cfgEcScale);
+  prefs.putFloat("eco", cfgEcOffset);
   prefs.end();
 }
 
@@ -142,6 +160,10 @@ static void applyDefaultSettings() {
     cfgRawPoints[i] = DEFAULT_RAW_POINTS[i];
     cfgPpmPoints[i] = DEFAULT_PPM_POINTS[i];
   }
+  cfgPhScale = DEFAULT_PH_FIELD_SCALE;
+  cfgPhOffset = DEFAULT_PH_FIELD_OFFSET;
+  cfgEcScale = DEFAULT_EC_FIELD_SCALE;
+  cfgEcOffset = DEFAULT_EC_FIELD_OFFSET;
 }
 
 static int wifiSignalBars() {
@@ -348,7 +370,7 @@ void handleRoot() {
 
 void handleSettingsPage() {
   String html;
-  html.reserve(3600);
+  html.reserve(4200);
   html += F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
   html += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
   html += F("<title>Ayarlar</title>");
@@ -371,6 +393,21 @@ void handleSettingsPage() {
   html += F("\"></div>");
   html += F("<div><label>pH10 voltaj</label><input name=\"ph10\" type=\"number\" step=\"0.0001\" value=\"");
   html += String(cfgPhCalV10, 4);
+  html += F("\"></div></div>");
+  html += F("<h2 style=\"font-size:1rem;margin-top:1rem;\">Saha duzeltmesi (besin/kabin suyu)</h2>");
+  html += F("<p class=\"hint\">Buffer sonrasi besin/kabin suyunda sapma icin: pH = pH*olcek+ofset; EC(uS)=EC*olcek+ofset. Ornek: olcek=1, ofset= el_cihaz-ESP_pH.</p>");
+  html += F("<div class=\"grid\">");
+  html += F("<div><label>pH olcek</label><input name=\"ph_scale\" type=\"number\" step=\"0.0001\" value=\"");
+  html += String(cfgPhScale, 4);
+  html += F("\"></div>");
+  html += F("<div><label>pH ofset</label><input name=\"ph_off\" type=\"number\" step=\"0.01\" value=\"");
+  html += String(cfgPhOffset, 2);
+  html += F("\"></div>");
+  html += F("<div><label>EC olcek</label><input name=\"ec_scale\" type=\"number\" step=\"0.0001\" value=\"");
+  html += String(cfgEcScale, 4);
+  html += F("\"></div>");
+  html += F("<div><label>EC ofset (uS)</label><input name=\"ec_off\" type=\"number\" step=\"1\" value=\"");
+  html += String(cfgEcOffset, 0);
   html += F("\"></div></div>");
   html += F("<h2 style=\"font-size:1rem;margin-top:1rem;\">TDS RAW->PPM noktalar</h2>");
   for (int i = 0; i < CAL_POINTS; i++) {
@@ -409,6 +446,11 @@ void handleSettingsSave() {
     if (server.hasArg(rk)) cfgRawPoints[i] = server.arg(rk).toFloat();
     if (server.hasArg(pk)) cfgPpmPoints[i] = server.arg(pk).toFloat();
   }
+
+  if (server.hasArg("ph_scale")) cfgPhScale = server.arg("ph_scale").toFloat();
+  if (server.hasArg("ph_off")) cfgPhOffset = server.arg("ph_off").toFloat();
+  if (server.hasArg("ec_scale")) cfgEcScale = server.arg("ec_scale").toFloat();
+  if (server.hasArg("ec_off")) cfgEcOffset = server.arg("ec_off").toFloat();
 
   saveSettings();
   forceRefresh = true;
@@ -641,10 +683,16 @@ void loop() {
     float voltage = 0.0;
     float tdsRawPpm = readTdsPpm(avgAdc, voltage);
     float tdsCalPpm = rawToPpmCalibrated(tdsRawPpm);
-    float ecUsCm = tdsCalPpm * cfgEcUsPerPpm;
+    float ecBuf = tdsCalPpm * cfgEcUsPerPpm;
+    float ecUsCm = ecBuf * cfgEcScale + cfgEcOffset;
+    if (ecUsCm < 0.0f) ecUsCm = 0.0f;
+
     float phAdc = 0.0;
     float phVoltage = 0.0;
-    float phValue = readPhValue(phAdc, phVoltage);
+    float phBuf = readPhValue(phAdc, phVoltage);
+    float phValue = phBuf * cfgPhScale + cfgPhOffset;
+    if (phValue < 0.0f) phValue = 0.0f;
+    if (phValue > 14.0f) phValue = 14.0f;
 
     g_ph = phValue;
     g_ecUsCm = ecUsCm;
@@ -672,13 +720,17 @@ void loop() {
     Serial.print(tdsRawPpm, 1);
     Serial.print("  PPM_cal:");
     Serial.print(tdsCalPpm, 1);
-    Serial.print("  EC_uS:");
+    Serial.print("  EC_kal:");
+    Serial.print(ecBuf, 1);
+    Serial.print("  EC_saha:");
     Serial.print(ecUsCm, 1);
     Serial.print("  PH_ADC:");
     Serial.print(phAdc, 1);
     Serial.print("  PH_V:");
     Serial.print(phVoltage, 3);
-    Serial.print("  pH:");
+    Serial.print("  pH_kal:");
+    Serial.print(phBuf, 2);
+    Serial.print("  pH_saha:");
     Serial.println(phValue, 2);
   }
 
