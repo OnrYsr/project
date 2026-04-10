@@ -12,6 +12,17 @@ Kod dosyasi: `esp32_oled_status.ino`
 
 - Baglanti bilgileri `wifi_secrets.h` icindedir (bu dosya `.gitignore` ile repoya gitmez).
 - Ilk kurulum: `wifi_secrets.example.h` dosyasini `wifi_secrets.h` olarak kopyalayip SSID/sifreyi yazin.
+
+### Arduino IDE: `wifi_secrets.h: No such file` hatasi
+
+Sketch sadece `.ino` olarak baska klasore tasinmissa `wifi_secrets.h` gelmez ve eski surumlerde derleme kirilirdi. Guncel kodda dosya yoksa **derleme yine basarili** olur; ancak WiFi/web **kapali** kalir ve Serial’da uyari gorursunuz.
+
+WiFi’yi acmak icin:
+
+1. Arduino IDE’de sketch’e sag ustten **+** ile yeni sekme acin, adi tam olarak **`wifi_secrets.h`** olsun.
+2. Icerigi `wifi_secrets.example.h` dosyasindan kopyalayip SSID ve sifreyi doldurun.
+
+Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klasoru olarak kullanin.
 - ESP32 acildiktan sonra WiFi'ye baglanir; Serial Monitor'da `Web: http://...` IP adresini gorursunuz.
 - Ayni WiFi'deki telefon veya bilgisayardan bu IP'ye gidince basit bir ozet sayfa acilir (pH, EC, TDS, RAW, mod, ADC/voltaj). Sayfa yaklasik 5 saniyede bir yenilenir.
 

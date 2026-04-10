@@ -3,7 +3,21 @@
 #include <WebServer.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <string.h>
+
+#if __has_include("wifi_secrets.h")
 #include "wifi_secrets.h"
+#else
+// Sketch klasorunde wifi_secrets.h yoksa derleme yine calisir; WiFi kapali kalir.
+// Arduino IDE: Sketch > Add File... veya sag ustten sekme + ile wifi_secrets.h ekleyin
+// (icerigi wifi_secrets.example.h dosyasindan kopyalayin).
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD ""
+#endif
+#endif
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -202,26 +216,32 @@ void setup() {
 
   Serial.println("OLED mesaj yazdirildi");
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print(F("WiFi baglaniyor"));
-  unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 20000) {
-    delay(500);
-    Serial.print(F("."));
-  }
-  Serial.println();
-  if (WiFi.status() == WL_CONNECTED) {
-    g_wifiOk = true;
-    server.on("/", HTTP_GET, handleRoot);
-    server.begin();
-    g_webStarted = true;
-    Serial.print(F("Web: http://"));
-    Serial.println(WiFi.localIP());
-  } else {
+  if (strlen(WIFI_SSID) == 0) {
     g_wifiOk = false;
     g_webStarted = false;
-    Serial.println(F("WiFi baglanamadi, web kapali."));
+    Serial.println(F("WiFi: wifi_secrets.h yok veya WIFI_SSID bos. Web kapali."));
+  } else {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print(F("WiFi baglaniyor"));
+    unsigned long wifiStart = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 20000) {
+      delay(500);
+      Serial.print(F("."));
+    }
+    Serial.println();
+    if (WiFi.status() == WL_CONNECTED) {
+      g_wifiOk = true;
+      server.on("/", HTTP_GET, handleRoot);
+      server.begin();
+      g_webStarted = true;
+      Serial.print(F("Web: http://"));
+      Serial.println(WiFi.localIP());
+    } else {
+      g_wifiOk = false;
+      g_webStarted = false;
+      Serial.println(F("WiFi baglanamadi, web kapali."));
+    }
   }
 }
 
