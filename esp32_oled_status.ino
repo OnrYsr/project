@@ -51,10 +51,13 @@ const float PH_CAL_V7 = 2.528;   // Measured voltage in pH 7 buffer
 const float PH_CAL_V10 = 2.012;  // Measured voltage in pH 10 buffer
 
 unsigned long lastUpdateMs = 0;
+unsigned long lastSampleMs = 0;
 unsigned long lastButtonMs = 0;
 bool debugMode = false;
 bool lastButtonState = HIGH;
 bool forceRefresh = true;
+bool haveSample = false;
+const unsigned long SAMPLE_INTERVAL_MS = 1000;
 const unsigned long NORMAL_INTERVAL_MS = 30000;
 const unsigned long DEBUG_INTERVAL_MS = 1000;
 
@@ -156,6 +159,7 @@ float readPhValue(float &phAdcOut, float &phVoltageOut) {
 }
 
 void handleRoot() {
+  // Web gorunumu OLED'den bagimsiz: ?view=normal | ?view=debug
   String view = server.hasArg("view") ? server.arg("view") : "normal";
   view.toLowerCase();
   bool webDebug = (view == "debug");
@@ -206,7 +210,10 @@ void handleRoot() {
     html += F("<div class=\"n-ph\">"); html += String(g_ph, 1); html += F("</div>");
     html += F("<div class=\"n-lab\" style=\"margin-top:0.6rem;\">EC</div>");
     html += F("<div class=\"n-ec\">"); html += String((int)g_ecUsCm); html += F(" uS/cm</div>");
-    html += F("<p class=\"hint\">OLED NORMAL gibi: pH + EC. Yenileme: 3 sn.</p>");
+    html += F("<p class=\"hint\">Web: sadece bu sayfa (OLED'i degistirmez). Yenileme 3 sn.</p>");
+    html += F("<p class=\"hint\">OLED cihaz: ");
+    html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL");
+    html += F(" (buton)</p>");
   } else {
     html += F("<div class=\"d-row\"><span class=\"d-lab\">RAW</span>"); html += String((int)g_tdsRaw); html += F("</div>");
     html += F("<div class=\"d-row\"><span class=\"d-lab\">TDS</span>"); html += String((int)g_tdsPpm); html += F(" ppm</div>");
@@ -214,10 +221,10 @@ void handleRoot() {
     html += F("<div class=\"d-row\"><span class=\"d-lab\">pH</span>"); html += String(g_ph, 2);
     html += F(" <span style=\"color:#64748b;\">pA:</span> "); html += String((int)g_phAdc); html += F("</div>");
     html += F("<div class=\"d-row\"><span class=\"d-lab\">pV</span>"); html += String(g_phV, 3); html += F("</div>");
-    html += F("<div class=\"d-row\" style=\"margin-top:0.5rem;color:#64748b;font-size:0.85rem;\">Cihaz OLED: ");
+    html += F("<div class=\"d-row\" style=\"margin-top:0.5rem;color:#64748b;font-size:0.85rem;\">OLED cihaz: ");
     html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL");
-    html += F("</div>");
-    html += F("<p class=\"hint\">OLED DEBUG gibi. Yenileme: 1 sn.</p>");
+    html += F(" (buton)</div>");
+    html += F("<p class=\"hint\">Web: sadece bu sayfa. Yenileme 1 sn.</p>");
   }
 
   html += F("</body></html>");
@@ -291,16 +298,17 @@ void loop() {
   bool buttonState = digitalRead(MODE_BTN_PIN);
   if (buttonState == LOW && lastButtonState == HIGH && millis() - lastButtonMs > 250) {
     debugMode = !debugMode;
+    forceRefresh = true;
+    lastUpdateMs = 0;
     lastButtonMs = millis();
-    forceRefresh = true; // Immediate refresh after mode change
   }
   lastButtonState = buttonState;
+  g_debugModeSnapshot = debugMode;
 
-  unsigned long updateIntervalMs = debugMode ? DEBUG_INTERVAL_MS : NORMAL_INTERVAL_MS;
-  if (forceRefresh || (millis() - lastUpdateMs >= updateIntervalMs)) {
-    lastUpdateMs = millis();
-    forceRefresh = false;
-
+  // Always read sensors every second (independent from display mode/platform).
+  if (!haveSample || (millis() - lastSampleMs >= SAMPLE_INTERVAL_MS)) {
+    lastSampleMs = millis();
+    haveSample = true;
     float avgAdc = 0.0;
     float voltage = 0.0;
     float tdsRawPpm = readTdsPpm(avgAdc, voltage);
@@ -318,40 +326,6 @@ void loop() {
     g_tdsV = voltage;
     g_phAdc = phAdc;
     g_phV = phVoltage;
-    g_debugModeSnapshot = debugMode;
-
-    display.clearDisplay();
-    display.setRotation(2);  // Keep 180-degree orientation
-    display.setTextColor(SSD1306_WHITE);
-
-    if (!debugMode) {
-      display.setTextSize(1);
-      display.setCursor(0, 0);
-      display.print("pH:");
-      display.println(phValue, 1);
-      display.setCursor(0, 24);
-      display.print("EC:");
-      display.println((int)ecUsCm);
-    } else {
-      display.setTextSize(1);
-      display.setCursor(0, 0);
-      display.print("RAW:");
-      display.println((int)tdsRawPpm);
-      display.print("TDS:");
-      display.print((int)tdsCalPpm);
-      display.println(" ppm");
-      display.print("EC:");
-      display.print((int)ecUsCm);
-      display.println(" uS");
-      display.print("pH:");
-      display.print(phValue, 2);
-      display.print(" pA:");
-      display.println((int)phAdc);
-      display.print("pV:");
-      display.println(phVoltage, 3);
-    }
-    display.display();
-
     Serial.print("ADC:");
     Serial.print(avgAdc, 1);
     Serial.print("  V:");
@@ -368,5 +342,44 @@ void loop() {
     Serial.print(phVoltage, 3);
     Serial.print("  pH:");
     Serial.println(phValue, 2);
+  }
+
+  // OLED refresh period is mode-dependent.
+  unsigned long displayIntervalMs = debugMode ? DEBUG_INTERVAL_MS : NORMAL_INTERVAL_MS;
+  if (haveSample && (forceRefresh || (millis() - lastUpdateMs >= displayIntervalMs))) {
+    lastUpdateMs = millis();
+    forceRefresh = false;
+
+    display.clearDisplay();
+    display.setRotation(2);  // Keep 180-degree orientation
+    display.setTextColor(SSD1306_WHITE);
+
+    if (!debugMode) {
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.print("pH:");
+      display.println(g_ph, 1);
+      display.setCursor(0, 24);
+      display.print("EC:");
+      display.println((int)g_ecUsCm);
+    } else {
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.print("RAW:");
+      display.println((int)g_tdsRaw);
+      display.print("TDS:");
+      display.print((int)g_tdsPpm);
+      display.println(" ppm");
+      display.print("EC:");
+      display.print((int)g_ecUsCm);
+      display.println(" uS");
+      display.print("pH:");
+      display.print(g_ph, 2);
+      display.print(" pA:");
+      display.println((int)g_phAdc);
+      display.print("pV:");
+      display.println(g_phV, 3);
+    }
+    display.display();
   }
 }

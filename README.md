@@ -26,9 +26,10 @@ WiFi’yi acmak icin:
 Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klasoru olarak kullanin.
 - ESP32 acildiktan sonra WiFi'ye baglanir; Serial Monitor'da `Web: http://...` IP adresini gorursunuz.
 - Ayni WiFi'deki telefon veya bilgisayardan bu IP'ye gidince web arayuzu acilir.
-- Ustte **Normal** / **Debug** butonlari vardir (OLED ekranina benzer icerik).
-  - Normal: sadece pH ve EC; sayfa **3 saniyede** bir yenilenir (`/?view=normal`).
-  - Debug: RAW, TDS, EC, pH, pA, pV; sayfa **1 saniyede** bir yenilenir (`/?view=debug`).
+- Ustte **Normal** / **Debug** sadece **web sayfasini** etkiler; OLED modunu degistirmez.
+- OLED modu yalnizca **fiziksel buton** (GPIO 27) ile degisir. Web ve OLED birbirinden bagimsiz secilebilir.
+- Normal (web): pH ve EC; **3 saniyede** bir yenilenir (`/?view=normal`).
+- Debug (web): RAW, TDS, EC, pH, pA, pV; **1 saniyede** bir yenilenir (`/?view=debug`). Sayfada OLED'in o anki modu da bilgi olarak gosterilir.
 
 Guvenlik: WiFi sifresini public repoya koymayin; `wifi_secrets.h` sadece kendi bilgisayarinizda kalsin.
 
