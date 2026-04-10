@@ -8,14 +8,13 @@
 #if __has_include("wifi_secrets.h")
 #include "wifi_secrets.h"
 #else
-// Sketch klasorunde wifi_secrets.h yoksa derleme yine calisir; WiFi kapali kalir.
-// Arduino IDE: Sketch > Add File... veya sag ustten sekme + ile wifi_secrets.h ekleyin
-// (icerigi wifi_secrets.example.h dosyasindan kopyalayin).
+// wifi_secrets.h yoksa asagidaki varsayilan ag kullanilir (tek dosya kopyala-yapistir icin).
+// Farkli ag icin: wifi_secrets.h ekleyin veya burayi duzenleyin.
 #ifndef WIFI_SSID
-#define WIFI_SSID ""
+#define WIFI_SSID "Zyxel_3691"
 #endif
 #ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD ""
+#define WIFI_PASSWORD "3883D488Y7"
 #endif
 #endif
 

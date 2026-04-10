@@ -10,8 +10,9 @@ Kod dosyasi: `esp32_oled_status.ino`
 
 ## WiFi ve web arayuzu
 
-- Baglanti bilgileri `wifi_secrets.h` icindedir (bu dosya `.gitignore` ile repoya gitmez).
-- Ilk kurulum: `wifi_secrets.example.h` dosyasini `wifi_secrets.h` olarak kopyalayip SSID/sifreyi yazin.
+- Varsayilan WiFi bilgileri `esp32_oled_status.ino` icinde (`#else` blogu) tanimlidir; sadece `.ino` kopyalasaniz da baglanir.
+- Isterseniz `wifi_secrets.h` ekleyerek bunlari ezer ve sifreyi repodan uzak tutarsiniz (`wifi_secrets.example.h` ornek).
+- **Guvenlik:** Repo public ise `.ino` icindeki sifre herkese acik olur; farkli ag/sifre icin `wifi_secrets.h` kullanin veya sifreyi degistirin.
 
 ### Arduino IDE: `wifi_secrets.h: No such file` hatasi
 
