@@ -8,6 +8,15 @@ Bu proje ESP32 ile su kalitesi takibi yapar:
 
 Kod dosyasi: `esp32_oled_status.ino`
 
+## WiFi ve web arayuzu
+
+- Baglanti bilgileri `wifi_secrets.h` icindedir (bu dosya `.gitignore` ile repoya gitmez).
+- Ilk kurulum: `wifi_secrets.example.h` dosyasini `wifi_secrets.h` olarak kopyalayip SSID/sifreyi yazin.
+- ESP32 acildiktan sonra WiFi'ye baglanir; Serial Monitor'da `Web: http://...` IP adresini gorursunuz.
+- Ayni WiFi'deki telefon veya bilgisayardan bu IP'ye gidince basit bir ozet sayfa acilir (pH, EC, TDS, RAW, mod, ADC/voltaj). Sayfa yaklasik 5 saniyede bir yenilenir.
+
+Guvenlik: WiFi sifresini public repoya koymayin; `wifi_secrets.h` sadece kendi bilgisayarinizda kalsin.
+
 ## Donanim
 
 - Kart: ESP32

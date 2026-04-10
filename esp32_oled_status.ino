@@ -1,6 +1,9 @@
 #include <Wire.h>
+#include <WiFi.h>
+#include <WebServer.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "wifi_secrets.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -11,6 +14,20 @@
 #define MODE_BTN_PIN 27
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+WebServer server(80);
+
+// Latest readings for web UI (updated together with OLED)
+float g_ph = 0;
+float g_ecUsCm = 0;
+float g_tdsPpm = 0;
+float g_tdsRaw = 0;
+float g_tdsAdc = 0;
+float g_tdsV = 0;
+float g_phAdc = 0;
+float g_phV = 0;
+bool g_debugModeSnapshot = false;
+bool g_wifiOk = false;
+bool g_webStarted = false;
 
 const float VREF = 3.3;          // ESP32 ADC reference voltage
 const float ADC_MAX = 4095.0;    // 12-bit ADC
@@ -24,8 +41,9 @@ unsigned long lastUpdateMs = 0;
 unsigned long lastButtonMs = 0;
 bool debugMode = false;
 bool lastButtonState = HIGH;
+bool forceRefresh = true;
 const unsigned long NORMAL_INTERVAL_MS = 30000;
-const unsigned long DEBUG_INTERVAL_MS = 3000;
+const unsigned long DEBUG_INTERVAL_MS = 1000;
 
 // Multi-point calibration table: RAW -> reference PPM
 // Note: Last provided point looked inconsistent (raw almost same, ppm much higher),
@@ -124,6 +142,36 @@ float readPhValue(float &phAdcOut, float &phVoltageOut) {
   return ph;
 }
 
+void handleRoot() {
+  String html;
+  html.reserve(900);
+  html += F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
+  html += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+  html += F("<meta http-equiv=\"refresh\" content=\"5\">");
+  html += F("<title>Hydro Monitor</title>");
+  html += F("<style>body{font-family:system-ui,sans-serif;margin:1.2rem;background:#0f172a;color:#e2e8f0;}");
+  html += F("h1{font-size:1.25rem;margin:0 0 1rem;}table{border-collapse:collapse;width:100%;max-width:28rem;}");
+  html += F("td{padding:0.45rem 0.5rem;border-bottom:1px solid #334155;}");
+  html += F("td:first-child{color:#94a3b8;} .ok{color:#4ade80;} .bad{color:#f87171;}</style></head><body>");
+  html += F("<h1>Su monitor</h1>");
+  html += F("<p>");
+  if (g_wifiOk) {
+    html += F("<span class=\"ok\">WiFi bagli</span>");
+  } else {
+    html += F("<span class=\"bad\">WiFi yok</span>");
+  }
+  html += F("</p><table>");
+  html += F("<tr><td>pH</td><td>"); html += String(g_ph, 2); html += F("</td></tr>");
+  html += F("<tr><td>EC</td><td>"); html += String((int)g_ecUsCm); html += F(" uS/cm</td></tr>");
+  html += F("<tr><td>TDS</td><td>"); html += String((int)g_tdsPpm); html += F(" ppm</td></tr>");
+  html += F("<tr><td>RAW (TDS)</td><td>"); html += String((int)g_tdsRaw); html += F("</td></tr>");
+  html += F("<tr><td>Mod</td><td>"); html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL"); html += F("</td></tr>");
+  html += F("<tr><td>pH ADC / V</td><td>"); html += String((int)g_phAdc); html += F(" / "); html += String(g_phV, 3); html += F("</td></tr>");
+  html += F("<tr><td>TDS ADC / V</td><td>"); html += String(g_tdsAdc, 1); html += F(" / "); html += String(g_tdsV, 3); html += F("</td></tr>");
+  html += F("</table><p style=\"color:#64748b;font-size:0.85rem;margin-top:1rem;\">Sayfa 5 sn'de bir yenilenir.</p></body></html>");
+  server.send(200, "text/html", html);
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -153,20 +201,47 @@ void setup() {
   display.display();
 
   Serial.println("OLED mesaj yazdirildi");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print(F("WiFi baglaniyor"));
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 20000) {
+    delay(500);
+    Serial.print(F("."));
+  }
+  Serial.println();
+  if (WiFi.status() == WL_CONNECTED) {
+    g_wifiOk = true;
+    server.on("/", HTTP_GET, handleRoot);
+    server.begin();
+    g_webStarted = true;
+    Serial.print(F("Web: http://"));
+    Serial.println(WiFi.localIP());
+  } else {
+    g_wifiOk = false;
+    g_webStarted = false;
+    Serial.println(F("WiFi baglanamadi, web kapali."));
+  }
 }
 
 void loop() {
+  if (g_webStarted) {
+    server.handleClient();
+  }
+
   bool buttonState = digitalRead(MODE_BTN_PIN);
   if (buttonState == LOW && lastButtonState == HIGH && millis() - lastButtonMs > 250) {
     debugMode = !debugMode;
     lastButtonMs = millis();
-    lastUpdateMs = 0; // Force immediate refresh after mode change
+    forceRefresh = true; // Immediate refresh after mode change
   }
   lastButtonState = buttonState;
 
   unsigned long updateIntervalMs = debugMode ? DEBUG_INTERVAL_MS : NORMAL_INTERVAL_MS;
-  if (millis() - lastUpdateMs >= updateIntervalMs) {
+  if (forceRefresh || (millis() - lastUpdateMs >= updateIntervalMs)) {
     lastUpdateMs = millis();
+    forceRefresh = false;
 
     float avgAdc = 0.0;
     float voltage = 0.0;
@@ -176,6 +251,16 @@ void loop() {
     float phAdc = 0.0;
     float phVoltage = 0.0;
     float phValue = readPhValue(phAdc, phVoltage);
+
+    g_ph = phValue;
+    g_ecUsCm = ecUsCm;
+    g_tdsPpm = tdsCalPpm;
+    g_tdsRaw = tdsRawPpm;
+    g_tdsAdc = avgAdc;
+    g_tdsV = voltage;
+    g_phAdc = phAdc;
+    g_phV = phVoltage;
+    g_debugModeSnapshot = debugMode;
 
     display.clearDisplay();
     display.setRotation(2);  // Keep 180-degree orientation
