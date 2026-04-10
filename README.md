@@ -33,6 +33,23 @@ Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klas
 
 Guvenlik: WiFi sifresini public repoya koymayin; `wifi_secrets.h` sadece kendi bilgisayarinizda kalsin.
 
+### OTA (USB olmadan guncelleme)
+
+Kodda `OTA_HOSTNAME` (varsayilan `hydro-esp32`) ve `OTA_PASSWORD` (varsayilan `hydro_ota_change_me`) tanimlidir; **ilk yuklemeden once sifreyi degistirmeniz onerilir**.
+
+**1) Tarayicidan (.bin)** — PC’siz telefon/tablet ile de yapilabilir:
+
+1. Arduino IDE: **Sketch → Export Compiled Binary** ile `.bin` uretin.
+2. Ayni WiFi’de `http://<ESP_IP>/ota` veya `http://hydro-esp32.local/ota` acin (mDNS router’da calismiyorsa IP kullanin).
+3. `.bin` dosyasini secip yukleyin; cihaz yeniden baslar.
+
+**2) Arduino IDE ag portu** (bilgisayarda IDE varsa USB gerekmez):
+
+1. ESP acik ve WiFi’de iken Arduino IDE **Port** listesinde **network** portu gorunur (`hydro-esp32` / IP).
+2. Normal yukleme gibi **Upload**; sifre sorulursa `OTA_PASSWORD` degerini girin.
+
+**Not:** ESP32 **partition scheme**’de OTA alani olmali (Arduino IDE: Tools → Partition Scheme → *Default* veya *Minimal SPIFFS* gibi OTA destekli secenek). Yukleme takilirsa partition’i kontrol edin.
+
 ## Donanim
 
 - Kart: ESP32

@@ -1,6 +1,9 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ArduinoOTA.h>
+#include <ESPmDNS.h>
+#include <Update.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <string.h>
@@ -26,6 +29,13 @@
 #define PH_PIN 35
 #define MODE_BTN_PIN 27
 
+// OTA: Arduino IDE -> Port -> ag portu | Tarayici -> http://<IP>/ota
+#ifndef OTA_HOSTNAME
+#define OTA_HOSTNAME "hydro-esp32"
+#endif
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD "hydro_ota_change_me"
+#endif
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 WebServer server(80);
 
@@ -41,6 +51,7 @@ float g_phV = 0;
 bool g_debugModeSnapshot = false;
 bool g_wifiOk = false;
 bool g_webStarted = false;
+bool g_otaStarted = false;
 
 const float VREF = 3.3;          // ESP32 ADC reference voltage
 const float ADC_MAX = 4095.0;    // 12-bit ADC
@@ -227,8 +238,66 @@ void handleRoot() {
     html += F("<p class=\"hint\">Web: sadece bu sayfa. Yenileme 1 sn.</p>");
   }
 
+  html += F("<p class=\"hint\"><a href=\"/ota\" style=\"color:#60a5fa;\">Firmware OTA</a></p>");
   html += F("</body></html>");
   server.send(200, "text/html", html);
+}
+
+void handleOtaPage() {
+  String html;
+  html.reserve(1200);
+  html += F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
+  html += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+  html += F("<title>OTA</title>");
+  html += F("<style>body{font-family:system-ui,sans-serif;margin:1rem;background:#0f172a;color:#e2e8f0;max-width:24rem;}");
+  html += F("a{color:#60a5fa;} input[type=file]{margin:0.75rem 0;width:100%;}");
+  html += F("button{padding:0.55rem 1rem;border-radius:0.5rem;border:none;background:#3b82f6;color:#fff;font-weight:600;}");
+  html += F(".warn{color:#fbbf24;font-size:0.85rem;margin-top:1rem;line-height:1.4;}</style></head><body>");
+  html += F("<h1 style=\"font-size:1.1rem;\">Firmware guncelle</h1>");
+  html += F("<p style=\"color:#94a3b8;font-size:0.9rem;\">Arduino IDE: Sketch -> Export derlenmis ikili dosya (.bin). Asagidan secip yukleyin.</p>");
+  html += F("<form method=\"POST\" action=\"/update\" enctype=\"multipart/form-data\">");
+  html += F("<input type=\"file\" name=\"firmware\" accept=\".bin\" required>");
+  html += F("<br><button type=\"submit\">Yukle ve yeniden baslat</button></form>");
+  html += F("<p><a href=\"/\">Ana sayfa</a></p>");
+  html += F("<p class=\"warn\">Uyari: Yukleme sirasinda guc kesmeyin. Sadece guvenilir agda kullanin. Sifreyi degistirin: OTA_PASSWORD</p>");
+  html += F("</body></html>");
+  server.send(200, "text/html", html);
+}
+
+void handleFirmwareUpload() {
+  HTTPUpload &upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.printf("OTA dosya: %s\n", upload.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("OTA bitti: %u bayt\n", upload.totalSize);
+    } else {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    Update.abort();
+    Serial.println(F("OTA iptal"));
+  }
+}
+
+void handleFirmwareUploadDone() {
+  server.sendHeader("Connection", "close");
+  if (Update.hasError()) {
+    server.send(500, "text/plain", "Guncelleme basarisiz");
+    Update.printError(Serial);
+    Update.abort();
+  } else {
+    server.send(200, "text/plain", "Tamam. Cihaz yeniden basliyor...");
+    delay(300);
+    ESP.restart();
+  }
 }
 
 void setup() {
@@ -277,7 +346,36 @@ void setup() {
     Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
       g_wifiOk = true;
+
+      if (MDNS.begin(OTA_HOSTNAME)) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.print(F("mDNS: http://"));
+        Serial.print(OTA_HOSTNAME);
+        Serial.println(F(".local"));
+      }
+
+      ArduinoOTA.setHostname(OTA_HOSTNAME);
+      if (strlen(OTA_PASSWORD) > 0) {
+        ArduinoOTA.setPassword(OTA_PASSWORD);
+      }
+      ArduinoOTA
+          .onStart([]() {
+            Serial.println(F("[OTA] Basladi"));
+          })
+          .onEnd([]() {
+            Serial.println(F("[OTA] Bitti"));
+          })
+          .onError([](ota_error_t err) {
+            Serial.printf("[OTA] Hata: %u\n", err);
+          });
+      ArduinoOTA.begin();
+      g_otaStarted = true;
+      Serial.print(F("ArduinoOTA sifre: "));
+      Serial.println(strlen(OTA_PASSWORD) > 0 ? F("(ayarli)") : F("(yok)"));
+
       server.on("/", HTTP_GET, handleRoot);
+      server.on("/ota", HTTP_GET, handleOtaPage);
+      server.on("/update", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUpload);
       server.begin();
       g_webStarted = true;
       Serial.print(F("Web: http://"));
@@ -291,6 +389,9 @@ void setup() {
 }
 
 void loop() {
+  if (g_otaStarted) {
+    ArduinoOTA.handle();
+  }
   if (g_webStarted) {
     server.handleClient();
   }
