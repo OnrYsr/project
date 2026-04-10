@@ -207,7 +207,7 @@ void handleRoot() {
 
   if (!webDebug) {
     html += F("<div class=\"n-lab\">pH</div>");
-    html += F("<div class=\"n-ph\">"); html += String(g_ph, 1); html += F("</div>");
+    html += F("<div class=\"n-ph\">"); html += String(g_ph, 2); html += F("</div>");
     html += F("<div class=\"n-lab\" style=\"margin-top:0.6rem;\">EC</div>");
     html += F("<div class=\"n-ec\">"); html += String((int)g_ecUsCm); html += F(" uS/cm</div>");
     html += F("<p class=\"hint\">Web: sadece bu sayfa (OLED'i degistirmez). Yenileme 3 sn.</p>");
@@ -358,7 +358,7 @@ void loop() {
       display.setTextSize(1);
       display.setCursor(0, 0);
       display.print("pH:");
-      display.println(g_ph, 1);
+      display.println(g_ph, 2);
       display.setCursor(0, 24);
       display.print("EC:");
       display.println((int)g_ecUsCm);

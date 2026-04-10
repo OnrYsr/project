@@ -54,8 +54,8 @@ Guvenlik: WiFi sifresini public repoya koymayin; `wifi_secrets.h` sadece kendi b
 OLED 180 derece dondurulmustur (`setRotation(2)`).
 
 Buton ile iki gorunum vardir:
-- `NORMAL`: sadece `pH` ve `EC` (sade ekran)
-- `DEBUG/KALIBRASYON`: `RAW`, `pA`, `pV` dahil detayli ekran
+- `NORMAL`: sadece `pH` ve `EC` (sade ekran). pH **ondalikta 2 basamak** (`x.xx`) hem OLED hem web normal gorunumde.
+- `DEBUG/KALIBRASYON`: `RAW`, `TDS`, `EC`, `pH`, `pA`, `pV` detayli ekran
 
 Not: Buton `INPUT_PULLUP` ile calisir. Butona basinca mod degisir.
 
@@ -142,7 +142,7 @@ OLED gorunmuyor ise adresi kontrol et (`0x3C` / `0x3D`).
 ## Kullanim Ozet
 
 1. Cihaz acildiktan sonra varsayilan ekran modu `NORMAL` olur.
-2. `NORMAL` modda sade gorunum ve seyrek olcum yapilir.
-3. Dokunmatik butona basinca `DEBUG` moda gecer.
-4. `DEBUG` modda kalibrasyon icin hizli olcum ve ham degerler gorulur.
-5. Butona tekrar basinca tekrar `NORMAL` moda doner.
+2. `NORMAL` modda pH (2 ondalik) + EC; OLED **1 saniyede** bir guncellenir (sensör ile uyumlu).
+3. Dokunmatik butona basinca `DEBUG` moda gecer (OLED).
+4. `DEBUG` modda ham/detayli degerler OLED’de gorulur; webde `?view=debug` ile benzer tablo (OLED modundan bagimsiz).
+5. Butona tekrar basinca `NORMAL` moda doner.
