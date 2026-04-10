@@ -58,7 +58,7 @@ bool lastButtonState = HIGH;
 bool forceRefresh = true;
 bool haveSample = false;
 const unsigned long SAMPLE_INTERVAL_MS = 1000;
-const unsigned long NORMAL_INTERVAL_MS = 30000;
+// OLED: debug ekrani 1 sn'de bir; normal ekran da sensörle ayni hizda (web ile uyumlu veri).
 const unsigned long DEBUG_INTERVAL_MS = 1000;
 
 // Multi-point calibration table: RAW -> reference PPM
@@ -345,7 +345,7 @@ void loop() {
   }
 
   // OLED refresh period is mode-dependent.
-  unsigned long displayIntervalMs = debugMode ? DEBUG_INTERVAL_MS : NORMAL_INTERVAL_MS;
+  unsigned long displayIntervalMs = debugMode ? DEBUG_INTERVAL_MS : SAMPLE_INTERVAL_MS;
   if (haveSample && (forceRefresh || (millis() - lastUpdateMs >= displayIntervalMs))) {
     lastUpdateMs = millis();
     forceRefresh = false;

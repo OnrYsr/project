@@ -59,9 +59,11 @@ Buton ile iki gorunum vardir:
 
 Not: Buton `INPUT_PULLUP` ile calisir. Butona basinca mod degisir.
 
-Olcum periyotlari:
-- `NORMAL` mod: 30 saniyede 1 olcum (dakikada 2)
-- `DEBUG` mod: 3 saniyede 1 olcum
+Olcum ve guncelleme:
+- Sensör okumasi (TDS/pH): **her 1 saniye** (web ve OLED ayni `g_*` degerlerini kullanir).
+- OLED **NORMAL** gorunumu: **1 saniyede** bir cizilir (web ile ayni guncel veri).
+- OLED **DEBUG** gorunumu: **1 saniyede** bir cizilir.
+- Web sayfasi: Normal gorunum **3 sn**, Debug **1 sn** meta-refresh (veri yine 1 sn'de bir ESP'de yenilenir).
 
 ## TDS/EC Kalibrasyon Notlari
 
