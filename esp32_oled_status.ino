@@ -129,6 +129,17 @@ static void saveSettings() {
   prefs.end();
 }
 
+static void applyDefaultSettings() {
+  cfgEcUsPerPpm = DEFAULT_EC_US_PER_PPM;
+  cfgPhCalV4 = DEFAULT_PH_CAL_V4;
+  cfgPhCalV7 = DEFAULT_PH_CAL_V7;
+  cfgPhCalV10 = DEFAULT_PH_CAL_V10;
+  for (int i = 0; i < CAL_POINTS; i++) {
+    cfgRawPoints[i] = DEFAULT_RAW_POINTS[i];
+    cfgPpmPoints[i] = DEFAULT_PPM_POINTS[i];
+  }
+}
+
 static int wifiSignalBars() {
   if (WiFi.status() != WL_CONNECTED) return 0;
   int r = WiFi.RSSI();
@@ -340,6 +351,7 @@ void handleSettingsPage() {
   html += F("<style>body{font-family:system-ui,sans-serif;margin:1rem;background:#0f172a;color:#e2e8f0;max-width:32rem;}");
   html += F("label{display:block;margin-top:0.7rem;color:#94a3b8;}input{width:100%;padding:0.5rem;border-radius:0.45rem;border:1px solid #334155;background:#111827;color:#e2e8f0;}");
   html += F(".grid{display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;}button{margin-top:1rem;padding:0.6rem 1rem;border:none;border-radius:0.5rem;background:#3b82f6;color:#fff;font-weight:600;}");
+  html += F(".btn-danger{background:#b91c1c;} .row{display:flex;gap:0.6rem;flex-wrap:wrap;}");
   html += F("a{color:#60a5fa;} .hint{font-size:0.85rem;color:#94a3b8;line-height:1.35;}</style></head><body>");
   html += F("<h1 style=\"font-size:1.1rem;\">Kalici Ayarlar (NVS)</h1>");
   html += F("<form method=\"POST\" action=\"/settings/save\">");
@@ -372,7 +384,9 @@ void handleSettingsPage() {
     html += String(cfgPpmPoints[i], 2);
     html += F("\"></div></div>");
   }
-  html += F("<button type=\"submit\">Kaydet</button></form>");
+  html += F("<div class=\"row\"><button type=\"submit\">Kaydet</button></form>");
+  html += F("<form method=\"POST\" action=\"/settings/reset\" onsubmit=\"return confirm('Fabrika ayarlarina donulsun mu?');\">");
+  html += F("<button class=\"btn-danger\" type=\"submit\">Fabrika ayarlarina don</button></form></div>");
   html += F("<p class=\"hint\">Kaydedilen ayarlar yeniden baslatmadan aktif olur ve enerji kesilse de kalir.</p>");
   html += F("<p><a href=\"/\">Ana sayfa</a></p>");
   html += F("</body></html>");
@@ -392,6 +406,14 @@ void handleSettingsSave() {
     if (server.hasArg(pk)) cfgPpmPoints[i] = server.arg(pk).toFloat();
   }
 
+  saveSettings();
+  forceRefresh = true;
+  server.sendHeader("Location", "/settings");
+  server.send(303, "text/plain", "");
+}
+
+void handleSettingsReset() {
+  applyDefaultSettings();
   saveSettings();
   forceRefresh = true;
   server.sendHeader("Location", "/settings");
@@ -532,6 +554,7 @@ void setup() {
       server.on("/", HTTP_GET, handleRoot);
       server.on("/settings", HTTP_GET, handleSettingsPage);
       server.on("/settings/save", HTTP_POST, handleSettingsSave);
+      server.on("/settings/reset", HTTP_POST, handleSettingsReset);
       server.on("/ota", HTTP_GET, handleOtaPage);
       server.on("/update", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUpload);
       server.begin();

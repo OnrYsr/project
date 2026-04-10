@@ -171,6 +171,9 @@ Asagidaki degerler ayni suya kademeli besin eklenerek alinmistir:
   - `EC uS/PPM` faktor
   - `pH4`, `pH7`, `pH10` voltajlari
   - 6 nokta `RAW` ve `PPM` TDS kalibrasyon tablosu
+- `settings` sayfasinda **Fabrika ayarlarina don** butonu vardir.
+  - Varsayilan kalibrasyon degerlerini geri yukler.
+  - Bu varsayilanlar NVS'e kaydedilir ve kalici olur.
 
 ## Derleme Notu
 
