@@ -50,6 +50,13 @@ Kodda `OTA_HOSTNAME` (varsayilan `hydro-esp32`) ve `OTA_PASSWORD` (varsayilan `h
 
 **Not:** ESP32 **partition scheme**’de OTA alani olmali (Arduino IDE: Tools → Partition Scheme → *Default* veya *Minimal SPIFFS* gibi OTA destekli secenek). Yukleme takilirsa partition’i kontrol edin.
 
+### Saat (NTP) ve WiFi gostergesi (OLED)
+
+- Saat internetten **NTP** ile alinir (`pool.ntp.org`, `time.google.com`). Varsayilan saat dilimi: **Turkiye TRT (UTC+3)** — kodda `NTP_GMT_OFFSET_SEC` ile degistirilebilir.
+- OLED ust satir: **sol** 3 sinyal cubugu (WiFi RSSI), **sag** `SS:DD` formatinda saat.
+- Web ana sayfada da ayni saat satiri gorunur.
+- WiFi yok veya NTP henuz gelmediyse saat `--:--` kalir.
+
 ## Donanim
 
 - Kart: ESP32
@@ -69,6 +76,8 @@ Kodda `OTA_HOSTNAME` (varsayilan `hydro-esp32`) ve `OTA_PASSWORD` (varsayilan `h
 ## Ekran Bilgileri
 
 OLED 180 derece dondurulmustur (`setRotation(2)`).
+
+Ust satir: WiFi sinyal cubuklari (sol) + NTP saati (sag). Altinda olcumler baslar.
 
 Buton ile iki gorunum vardir:
 - `NORMAL`: sadece `pH` ve `EC` (sade ekran). pH **ondalikta 2 basamak** (`x.xx`) hem OLED hem web normal gorunumde.

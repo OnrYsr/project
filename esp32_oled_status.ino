@@ -7,6 +7,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <string.h>
+#include <time.h>
 
 #if __has_include("wifi_secrets.h")
 #include "wifi_secrets.h"
@@ -36,6 +37,15 @@
 #ifndef OTA_PASSWORD
 #define OTA_PASSWORD "hydro_ota_change_me"
 #endif
+
+// NTP (internet saati). Turkiye TRT = UTC+3, yaz saati yok.
+#ifndef NTP_GMT_OFFSET_SEC
+#define NTP_GMT_OFFSET_SEC (3 * 3600)
+#endif
+
+// OLED ust bilgi cubugu (WiFi + saat); asil icerik bundan asagi.
+const int OLED_STATUS_H = 9;
+
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 WebServer server(80);
 
@@ -52,6 +62,7 @@ bool g_debugModeSnapshot = false;
 bool g_wifiOk = false;
 bool g_webStarted = false;
 bool g_otaStarted = false;
+char g_clockStr[6] = "--:--";
 
 const float VREF = 3.3;          // ESP32 ADC reference voltage
 const float ADC_MAX = 4095.0;    // 12-bit ADC
@@ -78,6 +89,41 @@ const unsigned long DEBUG_INTERVAL_MS = 1000;
 const int CAL_POINTS = 6;
 const float RAW_POINTS[CAL_POINTS] = {45, 183, 236, 469, 911, 1019};
 const float PPM_POINTS[CAL_POINTS] = {83, 218, 268, 487, 816, 992};
+
+static int wifiSignalBars() {
+  if (WiFi.status() != WL_CONNECTED) return 0;
+  int r = WiFi.RSSI();
+  if (r > -55) return 3;
+  if (r > -67) return 2;
+  if (r > -80) return 1;
+  return 0;
+}
+
+static void drawOledStatusBar() {
+  const int baselineY = OLED_STATUS_H - 1;
+  const uint8_t bw = 2;
+  const uint8_t gap = 1;
+  int lvl = wifiSignalBars();
+  int x = 0;
+  for (int i = 0; i < 3; i++) {
+    uint8_t h = 2 + (uint8_t)i * 2;
+    int y = baselineY - (int)h;
+    if (i < lvl) {
+      display.fillRect(x, y, bw, h, SSD1306_WHITE);
+    } else {
+      display.drawRect(x, y, bw, h, SSD1306_WHITE);
+    }
+    x += bw + gap;
+  }
+
+  display.setTextSize(1);
+  int16_t x1, y1;
+  uint16_t tw, th;
+  display.getTextBounds(g_clockStr, 0, 0, &x1, &y1, &tw, &th);
+  display.setCursor(SCREEN_WIDTH - (int)tw, 0);
+  display.setTextColor(SSD1306_WHITE);
+  display.print(g_clockStr);
+}
 
 float readTdsPpm(float &avgAdcOut, float &voltageOut) {
   const int sampleCount = 20;
@@ -215,6 +261,9 @@ void handleRoot() {
   } else {
     html += F("<div class=\"bad\">WiFi yok</div>");
   }
+  html += F("<div style=\"color:#94a3b8;font-size:0.85rem;margin:0.15rem 0 0.5rem;\">Saat: ");
+  html += g_clockStr;
+  html += F(" (NTP, TRT)</div>");
 
   if (!webDebug) {
     html += F("<div class=\"n-lab\">pH</div>");
@@ -380,6 +429,19 @@ void setup() {
       g_webStarted = true;
       Serial.print(F("Web: http://"));
       Serial.println(WiFi.localIP());
+
+      configTime(NTP_GMT_OFFSET_SEC, 0, "pool.ntp.org", "time.google.com");
+      Serial.print(F("NTP (UTC+"));
+      Serial.print(NTP_GMT_OFFSET_SEC / 3600);
+      Serial.println(F("h) senkron..."));
+      for (int n = 0; n < 40; n++) {
+        time_t t = time(nullptr);
+        if (t > 1700000000) {
+          Serial.println(F("NTP tamam"));
+          break;
+        }
+        delay(250);
+      }
     } else {
       g_wifiOk = false;
       g_webStarted = false;
@@ -427,6 +489,16 @@ void loop() {
     g_tdsV = voltage;
     g_phAdc = phAdc;
     g_phV = phVoltage;
+
+    time_t now = time(nullptr);
+    if (now > 1700000000) {
+      struct tm ti;
+      localtime_r(&now, &ti);
+      snprintf(g_clockStr, sizeof(g_clockStr), "%02d:%02d", ti.tm_hour, ti.tm_min);
+    } else {
+      snprintf(g_clockStr, sizeof(g_clockStr), "%s", "--:--");
+    }
+
     Serial.print("ADC:");
     Serial.print(avgAdc, 1);
     Serial.print("  V:");
@@ -455,17 +527,19 @@ void loop() {
     display.setRotation(2);  // Keep 180-degree orientation
     display.setTextColor(SSD1306_WHITE);
 
+    drawOledStatusBar();
+
     if (!debugMode) {
       display.setTextSize(1);
-      display.setCursor(0, 0);
+      display.setCursor(0, OLED_STATUS_H);
       display.print("pH:");
       display.println(g_ph, 2);
-      display.setCursor(0, 24);
+      display.setCursor(0, OLED_STATUS_H + 24);
       display.print("EC:");
       display.println((int)g_ecUsCm);
     } else {
       display.setTextSize(1);
-      display.setCursor(0, 0);
+      display.setCursor(0, OLED_STATUS_H);
       display.print("RAW:");
       display.println((int)g_tdsRaw);
       display.print("TDS:");
