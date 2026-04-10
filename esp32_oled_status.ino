@@ -4,6 +4,7 @@
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
 #include <Update.h>
+#include <Preferences.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <string.h>
@@ -48,6 +49,7 @@ const int OLED_STATUS_H = 9;
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 WebServer server(80);
+Preferences prefs;
 
 // Latest readings for web UI (updated together with OLED)
 float g_ph = 0;
@@ -67,10 +69,10 @@ char g_clockStr[6] = "--:--";
 const float VREF = 3.3;          // ESP32 ADC reference voltage
 const float ADC_MAX = 4095.0;    // 12-bit ADC
 const float WATER_TEMP_C = 25.0; // Temperature compensation reference
-const float EC_US_PER_PPM = 2.0; // Your meter data: EC(uS/cm) ~= 2 * PPM
-const float PH_CAL_V4 = 3.300;   // Measured voltage in pH 4 buffer
-const float PH_CAL_V7 = 2.528;   // Measured voltage in pH 7 buffer
-const float PH_CAL_V10 = 2.012;  // Measured voltage in pH 10 buffer
+const float DEFAULT_EC_US_PER_PPM = 2.0;
+const float DEFAULT_PH_CAL_V4 = 3.300;
+const float DEFAULT_PH_CAL_V7 = 2.528;
+const float DEFAULT_PH_CAL_V10 = 2.012;
 
 unsigned long lastUpdateMs = 0;
 unsigned long lastSampleMs = 0;
@@ -87,8 +89,45 @@ const unsigned long DEBUG_INTERVAL_MS = 1000;
 // Note: Last provided point looked inconsistent (raw almost same, ppm much higher),
 // so it is intentionally excluded to keep mapping stable.
 const int CAL_POINTS = 6;
-const float RAW_POINTS[CAL_POINTS] = {45, 183, 236, 469, 911, 1019};
-const float PPM_POINTS[CAL_POINTS] = {83, 218, 268, 487, 816, 992};
+const float DEFAULT_RAW_POINTS[CAL_POINTS] = {45, 183, 236, 469, 911, 1019};
+const float DEFAULT_PPM_POINTS[CAL_POINTS] = {83, 218, 268, 487, 816, 992};
+
+float cfgEcUsPerPpm = DEFAULT_EC_US_PER_PPM;
+float cfgPhCalV4 = DEFAULT_PH_CAL_V4;
+float cfgPhCalV7 = DEFAULT_PH_CAL_V7;
+float cfgPhCalV10 = DEFAULT_PH_CAL_V10;
+float cfgRawPoints[CAL_POINTS];
+float cfgPpmPoints[CAL_POINTS];
+
+static void loadSettings() {
+  prefs.begin("hydro", true);
+  cfgEcUsPerPpm = prefs.getFloat("ecf", DEFAULT_EC_US_PER_PPM);
+  cfgPhCalV4 = prefs.getFloat("ph4", DEFAULT_PH_CAL_V4);
+  cfgPhCalV7 = prefs.getFloat("ph7", DEFAULT_PH_CAL_V7);
+  cfgPhCalV10 = prefs.getFloat("ph10", DEFAULT_PH_CAL_V10);
+  for (int i = 0; i < CAL_POINTS; i++) {
+    String rk = "r" + String(i);
+    String pk = "p" + String(i);
+    cfgRawPoints[i] = prefs.getFloat(rk.c_str(), DEFAULT_RAW_POINTS[i]);
+    cfgPpmPoints[i] = prefs.getFloat(pk.c_str(), DEFAULT_PPM_POINTS[i]);
+  }
+  prefs.end();
+}
+
+static void saveSettings() {
+  prefs.begin("hydro", false);
+  prefs.putFloat("ecf", cfgEcUsPerPpm);
+  prefs.putFloat("ph4", cfgPhCalV4);
+  prefs.putFloat("ph7", cfgPhCalV7);
+  prefs.putFloat("ph10", cfgPhCalV10);
+  for (int i = 0; i < CAL_POINTS; i++) {
+    String rk = "r" + String(i);
+    String pk = "p" + String(i);
+    prefs.putFloat(rk.c_str(), cfgRawPoints[i]);
+    prefs.putFloat(pk.c_str(), cfgPpmPoints[i]);
+  }
+  prefs.end();
+}
 
 static int wifiSignalBars() {
   if (WiFi.status() != WL_CONNECTED) return 0;
@@ -150,22 +189,22 @@ float readTdsPpm(float &avgAdcOut, float &voltageOut) {
 }
 
 float rawToPpmCalibrated(float rawValue) {
-  if (rawValue <= RAW_POINTS[0]) {
+  if (rawValue <= cfgRawPoints[0]) {
     // Extrapolate below first point instead of clamping, so low readings can change
-    float x1 = RAW_POINTS[0];
-    float x2 = RAW_POINTS[1];
-    float y1 = PPM_POINTS[0];
-    float y2 = PPM_POINTS[1];
+    float x1 = cfgRawPoints[0];
+    float x2 = cfgRawPoints[1];
+    float y1 = cfgPpmPoints[0];
+    float y2 = cfgPpmPoints[1];
     float t = (rawValue - x1) / (x2 - x1);
     float ppm = y1 + t * (y2 - y1);
     return ppm < 0 ? 0 : ppm;
   }
 
   for (int i = 0; i < CAL_POINTS - 1; i++) {
-    float x1 = RAW_POINTS[i];
-    float x2 = RAW_POINTS[i + 1];
-    float y1 = PPM_POINTS[i];
-    float y2 = PPM_POINTS[i + 1];
+    float x1 = cfgRawPoints[i];
+    float x2 = cfgRawPoints[i + 1];
+    float y1 = cfgPpmPoints[i];
+    float y2 = cfgPpmPoints[i + 1];
 
     if (rawValue >= x1 && rawValue <= x2) {
       float t = (rawValue - x1) / (x2 - x1);
@@ -174,10 +213,10 @@ float rawToPpmCalibrated(float rawValue) {
   }
 
   // Slight extrapolation above last point
-  float x1 = RAW_POINTS[CAL_POINTS - 2];
-  float x2 = RAW_POINTS[CAL_POINTS - 1];
-  float y1 = PPM_POINTS[CAL_POINTS - 2];
-  float y2 = PPM_POINTS[CAL_POINTS - 1];
+  float x1 = cfgRawPoints[CAL_POINTS - 2];
+  float x2 = cfgRawPoints[CAL_POINTS - 1];
+  float y1 = cfgPpmPoints[CAL_POINTS - 2];
+  float y2 = cfgPpmPoints[CAL_POINTS - 1];
   float t = (rawValue - x1) / (x2 - x1);
   float ppm = y1 + t * (y2 - y1);
   return ppm < 0 ? 0 : ppm;
@@ -197,13 +236,13 @@ float readPhValue(float &phAdcOut, float &phVoltageOut) {
   // Piecewise linear calibration:
   // segment-1: pH 4..7 (V4 to V7), segment-2: pH 7..10 (V7 to V10)
   float ph;
-  if (voltage >= PH_CAL_V7) {
-    float m1 = (7.0 - 4.0) / (PH_CAL_V7 - PH_CAL_V4);
-    float b1 = 7.0 - m1 * PH_CAL_V7;
+  if (voltage >= cfgPhCalV7) {
+    float m1 = (7.0 - 4.0) / (cfgPhCalV7 - cfgPhCalV4);
+    float b1 = 7.0 - m1 * cfgPhCalV7;
     ph = m1 * voltage + b1;
   } else {
-    float m2 = (10.0 - 7.0) / (PH_CAL_V10 - PH_CAL_V7);
-    float b2 = 7.0 - m2 * PH_CAL_V7;
+    float m2 = (10.0 - 7.0) / (cfgPhCalV10 - cfgPhCalV7);
+    float b2 = 7.0 - m2 * cfgPhCalV7;
     ph = m2 * voltage + b2;
   }
 
@@ -287,9 +326,76 @@ void handleRoot() {
     html += F("<p class=\"hint\">Web: sadece bu sayfa. Yenileme 1 sn.</p>");
   }
 
-  html += F("<p class=\"hint\"><a href=\"/ota\" style=\"color:#60a5fa;\">Firmware OTA</a></p>");
+  html += F("<p class=\"hint\"><a href=\"/settings\" style=\"color:#60a5fa;\">Ayarlar/Kalibrasyon</a> | <a href=\"/ota\" style=\"color:#60a5fa;\">Firmware OTA</a></p>");
   html += F("</body></html>");
   server.send(200, "text/html", html);
+}
+
+void handleSettingsPage() {
+  String html;
+  html.reserve(3600);
+  html += F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
+  html += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+  html += F("<title>Ayarlar</title>");
+  html += F("<style>body{font-family:system-ui,sans-serif;margin:1rem;background:#0f172a;color:#e2e8f0;max-width:32rem;}");
+  html += F("label{display:block;margin-top:0.7rem;color:#94a3b8;}input{width:100%;padding:0.5rem;border-radius:0.45rem;border:1px solid #334155;background:#111827;color:#e2e8f0;}");
+  html += F(".grid{display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;}button{margin-top:1rem;padding:0.6rem 1rem;border:none;border-radius:0.5rem;background:#3b82f6;color:#fff;font-weight:600;}");
+  html += F("a{color:#60a5fa;} .hint{font-size:0.85rem;color:#94a3b8;line-height:1.35;}</style></head><body>");
+  html += F("<h1 style=\"font-size:1.1rem;\">Kalici Ayarlar (NVS)</h1>");
+  html += F("<form method=\"POST\" action=\"/settings/save\">");
+  html += F("<label>EC uS/PPM faktor</label><input name=\"ecf\" type=\"number\" step=\"0.0001\" value=\"");
+  html += String(cfgEcUsPerPpm, 4);
+  html += F("\">");
+  html += F("<div class=\"grid\">");
+  html += F("<div><label>pH4 voltaj</label><input name=\"ph4\" type=\"number\" step=\"0.0001\" value=\"");
+  html += String(cfgPhCalV4, 4);
+  html += F("\"></div>");
+  html += F("<div><label>pH7 voltaj</label><input name=\"ph7\" type=\"number\" step=\"0.0001\" value=\"");
+  html += String(cfgPhCalV7, 4);
+  html += F("\"></div>");
+  html += F("<div><label>pH10 voltaj</label><input name=\"ph10\" type=\"number\" step=\"0.0001\" value=\"");
+  html += String(cfgPhCalV10, 4);
+  html += F("\"></div></div>");
+  html += F("<h2 style=\"font-size:1rem;margin-top:1rem;\">TDS RAW->PPM noktalar</h2>");
+  for (int i = 0; i < CAL_POINTS; i++) {
+    html += F("<div class=\"grid\"><div><label>RAW ");
+    html += String(i + 1);
+    html += F("</label><input name=\"r");
+    html += String(i);
+    html += F("\" type=\"number\" step=\"0.01\" value=\"");
+    html += String(cfgRawPoints[i], 2);
+    html += F("\"></div><div><label>PPM ");
+    html += String(i + 1);
+    html += F("</label><input name=\"p");
+    html += String(i);
+    html += F("\" type=\"number\" step=\"0.01\" value=\"");
+    html += String(cfgPpmPoints[i], 2);
+    html += F("\"></div></div>");
+  }
+  html += F("<button type=\"submit\">Kaydet</button></form>");
+  html += F("<p class=\"hint\">Kaydedilen ayarlar yeniden baslatmadan aktif olur ve enerji kesilse de kalir.</p>");
+  html += F("<p><a href=\"/\">Ana sayfa</a></p>");
+  html += F("</body></html>");
+  server.send(200, "text/html", html);
+}
+
+void handleSettingsSave() {
+  if (server.hasArg("ecf")) cfgEcUsPerPpm = server.arg("ecf").toFloat();
+  if (server.hasArg("ph4")) cfgPhCalV4 = server.arg("ph4").toFloat();
+  if (server.hasArg("ph7")) cfgPhCalV7 = server.arg("ph7").toFloat();
+  if (server.hasArg("ph10")) cfgPhCalV10 = server.arg("ph10").toFloat();
+
+  for (int i = 0; i < CAL_POINTS; i++) {
+    String rk = "r" + String(i);
+    String pk = "p" + String(i);
+    if (server.hasArg(rk)) cfgRawPoints[i] = server.arg(rk).toFloat();
+    if (server.hasArg(pk)) cfgPpmPoints[i] = server.arg(pk).toFloat();
+  }
+
+  saveSettings();
+  forceRefresh = true;
+  server.sendHeader("Location", "/settings");
+  server.send(303, "text/plain", "");
 }
 
 void handleOtaPage() {
@@ -351,6 +457,7 @@ void handleFirmwareUploadDone() {
 
 void setup() {
   Serial.begin(115200);
+  loadSettings();
 
   // ESP32 default I2C pins set explicitly for clarity
   Wire.begin(21, 22);  // SDA, SCL
@@ -423,6 +530,8 @@ void setup() {
       Serial.println(strlen(OTA_PASSWORD) > 0 ? F("(ayarli)") : F("(yok)"));
 
       server.on("/", HTTP_GET, handleRoot);
+      server.on("/settings", HTTP_GET, handleSettingsPage);
+      server.on("/settings/save", HTTP_POST, handleSettingsSave);
       server.on("/ota", HTTP_GET, handleOtaPage);
       server.on("/update", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUpload);
       server.begin();
@@ -476,7 +585,7 @@ void loop() {
     float voltage = 0.0;
     float tdsRawPpm = readTdsPpm(avgAdc, voltage);
     float tdsCalPpm = rawToPpmCalibrated(tdsRawPpm);
-    float ecUsCm = tdsCalPpm * EC_US_PER_PPM;
+    float ecUsCm = tdsCalPpm * cfgEcUsPerPpm;
     float phAdc = 0.0;
     float phVoltage = 0.0;
     float phValue = readPhValue(phAdc, phVoltage);

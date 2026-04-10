@@ -30,6 +30,11 @@ Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klas
 - OLED modu yalnizca **fiziksel buton** (GPIO 27) ile degisir. Web ve OLED birbirinden bagimsiz secilebilir.
 - Normal (web): pH ve EC; **3 saniyede** bir yenilenir (`/?view=normal`).
 - Debug (web): RAW, TDS, EC, pH, pA, pV; **1 saniyede** bir yenilenir (`/?view=debug`). Sayfada OLED'in o anki modu da bilgi olarak gosterilir.
+- `Ayarlar/Kalibrasyon` sayfasi: `http://<ESP_IP>/settings`
+  - pH kalibrasyon voltajlari (`ph4/ph7/ph10`)
+  - EC faktor (`uS/PPM`)
+  - TDS `RAW -> PPM` noktalarini duzenleyip kaydetme
+  - Kayitlar ESP32 NVS/Preferences'a yazilir, elektrik kesilse de korunur.
 
 Guvenlik: WiFi sifresini public repoya koymayin; `wifi_secrets.h` sadece kendi bilgisayarinizda kalsin.
 
@@ -156,6 +161,16 @@ Asagidaki degerler ayni suya kademeli besin eklenerek alinmistir:
 4. Kod icinde pH kalibrasyon voltajlarini guncelle.
 5. TDS/EC icin kademeli referans seti topla ve tabloyu guncelle.
 6. Son kontrol: normal su + besinli su araliginda farki kontrol et.
+
+## Kalici Ayarlar (NVS)
+
+- Ayarlar `Preferences` namespace: `hydro` altinda saklanir.
+- Webden kaydedilen degerler yeniden baslatmadan aktif olur.
+- Cihaz acilisinda kayitli degerler otomatik yuklenir.
+- `settings` sayfasindan degistirebilecegin alanlar:
+  - `EC uS/PPM` faktor
+  - `pH4`, `pH7`, `pH10` voltajlari
+  - 6 nokta `RAW` ve `PPM` TDS kalibrasyon tablosu
 
 ## Derleme Notu
 
