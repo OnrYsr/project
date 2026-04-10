@@ -55,6 +55,14 @@ Kodda `OTA_HOSTNAME` (varsayilan `hydro-esp32`) ve `OTA_PASSWORD` (varsayilan `h
 1. ESP acik ve WiFi’de iken Arduino IDE **Port** listesinde **network** portu gorunur (`hydro-esp32` / IP).
 2. Normal yukleme gibi **Upload**; sifre sorulursa `OTA_PASSWORD` degerini girin.
 
+**Arduino IDE: `Authentication Failed` / sifre hatasi**
+
+- IDE’nin istedigi sifre **WiFi sifresi degil**; cihazdaki firmware’deki **`OTA_PASSWORD`** ile **aynen** ayni olmali.
+- Varsayilan kod: `hydro_ota_change_me` (buyuk/kucuk harf ve alt cizgi dahil, bosluk yok).
+- Cihazda **eski firmware** yuklu ise, o surumde hangi `OTA_PASSWORD` kullanildiysa **onu** girmen gerekir; kaynak kodu degistirmek cihazi degistirmez.
+- Cozum: Dogru sifreyi dene; emin degilsen bir kez **USB ile** flash edip guncel `OTA_PASSWORD` ile yeniden dene.
+- Sadece guvenilir ev aginda test icin: `OTA_PASSWORD` bos string `""` yapip yeniden yuklersen ag OTA sifresiz olur (onerilmez, riskli).
+
 **Not:** ESP32 **partition scheme**’de OTA alani olmali (Arduino IDE: Tools → Partition Scheme → *Default* veya *Minimal SPIFFS* gibi OTA destekli secenek). Yukleme takilirsa partition’i kontrol edin.
 
 ### Saat (NTP) ve WiFi gostergesi (OLED)
