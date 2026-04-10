@@ -77,6 +77,10 @@ const float DEFAULT_PH_CAL_V10 = 2.012;
 unsigned long lastUpdateMs = 0;
 unsigned long lastSampleMs = 0;
 unsigned long lastButtonMs = 0;
+unsigned long lastWifiRetryMs = 0;
+unsigned long lastNtpRetryMs = 0;
+static bool s_httpRoutesRegistered = false;
+static bool s_networkStackStarted = false;
 bool debugMode = false;
 bool lastButtonState = HIGH;
 bool forceRefresh = true;
@@ -477,6 +481,88 @@ void handleFirmwareUploadDone() {
   }
 }
 
+static const unsigned long WIFI_RETRY_INTERVAL_MS = 8000;
+
+static void registerHttpRoutesIfNeeded() {
+  if (s_httpRoutesRegistered) return;
+  s_httpRoutesRegistered = true;
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/settings", HTTP_GET, handleSettingsPage);
+  server.on("/settings/save", HTTP_POST, handleSettingsSave);
+  server.on("/settings/reset", HTTP_POST, handleSettingsReset);
+  server.on("/ota", HTTP_GET, handleOtaPage);
+  server.on("/update", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUpload);
+}
+
+static void startNetworkStack() {
+  if (s_networkStackStarted) return;
+  s_networkStackStarted = true;
+
+  registerHttpRoutesIfNeeded();
+  server.begin();
+  g_webStarted = true;
+
+  if (MDNS.begin(OTA_HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.print(F("mDNS: http://"));
+    Serial.print(OTA_HOSTNAME);
+    Serial.println(F(".local"));
+  }
+
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  if (strlen(OTA_PASSWORD) > 0) {
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+  }
+  ArduinoOTA
+      .onStart([]() {
+        Serial.println(F("[OTA] Basladi"));
+      })
+      .onEnd([]() {
+        Serial.println(F("[OTA] Bitti"));
+      })
+      .onError([](ota_error_t err) {
+        Serial.printf("[OTA] Hata: %u\n", err);
+      });
+  ArduinoOTA.begin();
+  g_otaStarted = true;
+  Serial.print(F("ArduinoOTA sifre: "));
+  Serial.println(strlen(OTA_PASSWORD) > 0 ? F("(ayarli)") : F("(yok)"));
+
+  configTime(NTP_GMT_OFFSET_SEC, 0, "pool.ntp.org", "time.google.com");
+  Serial.print(F("NTP (UTC+"));
+  Serial.print(NTP_GMT_OFFSET_SEC / 3600);
+  Serial.println(F("h) baslatildi"));
+
+  Serial.print(F("Web: http://"));
+  Serial.println(WiFi.localIP());
+}
+
+static void maintainWifi() {
+  if (strlen(WIFI_SSID) == 0) {
+    g_wifiOk = false;
+    return;
+  }
+
+  g_wifiOk = (WiFi.status() == WL_CONNECTED);
+
+  if (g_wifiOk) {
+    if (!s_networkStackStarted) {
+      Serial.println(F("WiFi baglandi, ag servisleri basliyor"));
+      startNetworkStack();
+    }
+    return;
+  }
+
+  if (millis() - lastWifiRetryMs >= WIFI_RETRY_INTERVAL_MS) {
+    lastWifiRetryMs = millis();
+    Serial.println(F("WiFi yok, yeniden deneniyor..."));
+    WiFi.disconnect(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   loadSettings();
@@ -514,79 +600,26 @@ void setup() {
     Serial.println(F("WiFi: wifi_secrets.h yok veya WIFI_SSID bos. Web kapali."));
   } else {
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.print(F("WiFi baglaniyor"));
-    unsigned long wifiStart = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 20000) {
-      delay(500);
-      Serial.print(F("."));
-    }
-    Serial.println();
-    if (WiFi.status() == WL_CONNECTED) {
-      g_wifiOk = true;
-
-      if (MDNS.begin(OTA_HOSTNAME)) {
-        MDNS.addService("http", "tcp", 80);
-        Serial.print(F("mDNS: http://"));
-        Serial.print(OTA_HOSTNAME);
-        Serial.println(F(".local"));
-      }
-
-      ArduinoOTA.setHostname(OTA_HOSTNAME);
-      if (strlen(OTA_PASSWORD) > 0) {
-        ArduinoOTA.setPassword(OTA_PASSWORD);
-      }
-      ArduinoOTA
-          .onStart([]() {
-            Serial.println(F("[OTA] Basladi"));
-          })
-          .onEnd([]() {
-            Serial.println(F("[OTA] Bitti"));
-          })
-          .onError([](ota_error_t err) {
-            Serial.printf("[OTA] Hata: %u\n", err);
-          });
-      ArduinoOTA.begin();
-      g_otaStarted = true;
-      Serial.print(F("ArduinoOTA sifre: "));
-      Serial.println(strlen(OTA_PASSWORD) > 0 ? F("(ayarli)") : F("(yok)"));
-
-      server.on("/", HTTP_GET, handleRoot);
-      server.on("/settings", HTTP_GET, handleSettingsPage);
-      server.on("/settings/save", HTTP_POST, handleSettingsSave);
-      server.on("/settings/reset", HTTP_POST, handleSettingsReset);
-      server.on("/ota", HTTP_GET, handleOtaPage);
-      server.on("/update", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUpload);
-      server.begin();
-      g_webStarted = true;
-      Serial.print(F("Web: http://"));
-      Serial.println(WiFi.localIP());
-
-      configTime(NTP_GMT_OFFSET_SEC, 0, "pool.ntp.org", "time.google.com");
-      Serial.print(F("NTP (UTC+"));
-      Serial.print(NTP_GMT_OFFSET_SEC / 3600);
-      Serial.println(F("h) senkron..."));
-      for (int n = 0; n < 40; n++) {
-        time_t t = time(nullptr);
-        if (t > 1700000000) {
-          Serial.println(F("NTP tamam"));
-          break;
-        }
-        delay(250);
-      }
-    } else {
-      g_wifiOk = false;
-      g_webStarted = false;
-      Serial.println(F("WiFi baglanamadi, web kapali."));
-    }
+    lastWifiRetryMs = millis();
+    Serial.println(F("WiFi baslatildi; baglanti arka planda denenir (OLED/sensor calisir)."));
   }
 }
 
 void loop() {
-  if (g_otaStarted) {
+  maintainWifi();
+
+  if (g_wifiOk && time(nullptr) <= 1700000000 && millis() - lastNtpRetryMs > 25000) {
+    lastNtpRetryMs = millis();
+    configTime(NTP_GMT_OFFSET_SEC, 0, "pool.ntp.org", "time.google.com");
+    Serial.println(F("NTP tekrar deneniyor"));
+  }
+
+  if (g_otaStarted && g_wifiOk) {
     ArduinoOTA.handle();
   }
-  if (g_webStarted) {
+  if (g_webStarted && g_wifiOk) {
     server.handleClient();
   }
 

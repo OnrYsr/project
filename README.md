@@ -24,7 +24,9 @@ WiFi’yi acmak icin:
 2. Icerigi `wifi_secrets.example.h` dosyasindan kopyalayip SSID ve sifreyi doldurun.
 
 Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klasoru olarak kullanin.
-- ESP32 acildiktan sonra WiFi'ye baglanir; Serial Monitor'da `Web: http://...` IP adresini gorursunuz.
+- ESP32 acildiktan sonra WiFi **arka planda** baglanir; baglanti gecikirse OLED ve sensor yine calisir, her **~8 sn**'de bir yeniden denenir.
+- Baglanti gelince web/NTP/OTA otomatik baslar; Serial'da `Web: http://...` gorunur.
+- NTP ilk gelmezse **~25 sn** aralikla tekrar denenir (adaptör/router gecikmesi icin).
 - Ayni WiFi'deki telefon veya bilgisayardan bu IP'ye gidince web arayuzu acilir.
 - Ustte **Normal** / **Debug** sadece **web sayfasini** etkiler; OLED modunu degistirmez.
 - OLED modu yalnizca **fiziksel buton** (GPIO 27) ile degisir. Web ve OLED birbirinden bagimsiz secilebilir.
