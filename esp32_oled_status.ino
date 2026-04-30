@@ -76,8 +76,14 @@ bool g_relayAux = false;
 bool g_lastRelayStrip = false;
 bool g_lastRelayDrop = false;
 bool g_lastRelayAux = false;
+bool g_auxIsolationActive = false;
+bool g_auxPrevStrip = false;
+bool g_auxPrevDrop = false;
 bool g_relayStateDirty = false;
 char g_clockStr[6] = "--:--";
+const int MAX_EVENT_LOGS = 16;
+int g_eventLogCount = 0;
+String g_eventLogs[MAX_EVENT_LOGS];
 
 const float VREF = 3.3;          // ESP32 ADC reference voltage
 const float ADC_MAX = 4095.0;    // 12-bit ADC
@@ -134,6 +140,19 @@ int gWinRuleCount = 0;
 int gWinRuleRelay[MAX_SCHED_RULES];
 int gWinRuleEnabled[MAX_SCHED_RULES];
 int gWinRuleAtMin[MAX_SCHED_RULES];
+int cfgCycleRelay = 2;
+int cfgCycleEnabled = 1;  // Aralik icindeki durum: 1=Aktif(ON), 0=Pasif(OFF)
+int cfgCycleStartMin = 0;
+int cfgCycleEndMin = 24 * 60;
+int cfgCyclePeriodMin = 120;
+int cfgCycleDurMin = 10;
+int gCycleRuleCount = 0;
+int gCycleRuleRelay[MAX_SCHED_RULES];
+int gCycleRuleEnabled[MAX_SCHED_RULES];
+int gCycleRuleStartMin[MAX_SCHED_RULES];
+int gCycleRuleEndMin[MAX_SCHED_RULES];
+int gCycleRulePeriodMin[MAX_SCHED_RULES];
+int gCycleRuleDurMin[MAX_SCHED_RULES];
 const unsigned long MANUAL_OVERRIDE_MS = 15UL * 60UL * 1000UL;  // 15 dk
 unsigned long g_manualOverrideUntilMs[3] = {0, 0, 0};
 // Saha düzeltmesi (besin/kabin suyu; buffer sonrasi ince ayar). ph' = ph * phs + pho, ec' = ec * ecs + eco
@@ -159,6 +178,12 @@ static void loadSettings() {
   cfgWinEnabled = prefs.getInt("swe", 0);
   cfgWinRelay = prefs.getInt("swr", 2);
   cfgWinAtMin = prefs.getInt("sws", 15 * 60);
+  cfgCycleRelay = prefs.getInt("scr", 2);
+  cfgCycleEnabled = prefs.getInt("sca", 1);
+  cfgCycleStartMin = prefs.getInt("scs", 0);
+  cfgCycleEndMin = prefs.getInt("sce", 24 * 60);
+  cfgCyclePeriodMin = prefs.getInt("scp", 120);
+  cfgCycleDurMin = prefs.getInt("scd", 10);
   g_lastRelayStrip = prefs.getBool("lrs", false);
   g_lastRelayDrop = prefs.getBool("lrd", false);
   g_lastRelayAux = prefs.getBool("lra", false);
@@ -170,6 +195,25 @@ static void loadSettings() {
     k = "wr" + String(i); gWinRuleRelay[i] = prefs.getInt(k.c_str(), 2);
     k = "we" + String(i); gWinRuleEnabled[i] = prefs.getInt(k.c_str(), 1);
     k = "ws" + String(i); gWinRuleAtMin[i] = prefs.getInt(k.c_str(), 0);
+  }
+  gCycleRuleCount = prefs.getInt("ccnt", 0);
+  if (gCycleRuleCount < 0) gCycleRuleCount = 0;
+  if (gCycleRuleCount > MAX_SCHED_RULES) gCycleRuleCount = MAX_SCHED_RULES;
+  for (int i = 0; i < gCycleRuleCount; i++) {
+    String k;
+    k = "cr" + String(i); gCycleRuleRelay[i] = prefs.getInt(k.c_str(), 2);
+    k = "ca" + String(i); gCycleRuleEnabled[i] = prefs.getInt(k.c_str(), 1);
+    k = "cs" + String(i); gCycleRuleStartMin[i] = prefs.getInt(k.c_str(), 0);
+    k = "ce" + String(i); gCycleRuleEndMin[i] = prefs.getInt(k.c_str(), 24 * 60);
+    k = "cp" + String(i); gCycleRulePeriodMin[i] = prefs.getInt(k.c_str(), 120);
+    k = "cd" + String(i); gCycleRuleDurMin[i] = prefs.getInt(k.c_str(), 10);
+  }
+  g_eventLogCount = prefs.getInt("elc", 0);
+  if (g_eventLogCount < 0) g_eventLogCount = 0;
+  if (g_eventLogCount > MAX_EVENT_LOGS) g_eventLogCount = MAX_EVENT_LOGS;
+  for (int i = 0; i < g_eventLogCount; i++) {
+    String k = "el" + String(i);
+    g_eventLogs[i] = prefs.getString(k.c_str(), "");
   }
   cfgPhScale = prefs.getFloat("phs", DEFAULT_PH_FIELD_SCALE);
   cfgPhOffset = prefs.getFloat("pho", DEFAULT_PH_FIELD_OFFSET);
@@ -195,6 +239,12 @@ static void saveSettings() {
   prefs.putInt("swe", cfgWinEnabled);
   prefs.putInt("swr", cfgWinRelay);
   prefs.putInt("sws", cfgWinAtMin);
+  prefs.putInt("scr", cfgCycleRelay);
+  prefs.putInt("sca", cfgCycleEnabled);
+  prefs.putInt("scs", cfgCycleStartMin);
+  prefs.putInt("sce", cfgCycleEndMin);
+  prefs.putInt("scp", cfgCyclePeriodMin);
+  prefs.putInt("scd", cfgCycleDurMin);
   prefs.putBool("lrs", g_lastRelayStrip);
   prefs.putBool("lrd", g_lastRelayDrop);
   prefs.putBool("lra", g_lastRelayAux);
@@ -204,6 +254,16 @@ static void saveSettings() {
     k = "wr" + String(i); prefs.putInt(k.c_str(), gWinRuleRelay[i]);
     k = "we" + String(i); prefs.putInt(k.c_str(), gWinRuleEnabled[i]);
     k = "ws" + String(i); prefs.putInt(k.c_str(), gWinRuleAtMin[i]);
+  }
+  prefs.putInt("ccnt", gCycleRuleCount);
+  for (int i = 0; i < gCycleRuleCount; i++) {
+    String k;
+    k = "cr" + String(i); prefs.putInt(k.c_str(), gCycleRuleRelay[i]);
+    k = "ca" + String(i); prefs.putInt(k.c_str(), gCycleRuleEnabled[i]);
+    k = "cs" + String(i); prefs.putInt(k.c_str(), gCycleRuleStartMin[i]);
+    k = "ce" + String(i); prefs.putInt(k.c_str(), gCycleRuleEndMin[i]);
+    k = "cp" + String(i); prefs.putInt(k.c_str(), gCycleRulePeriodMin[i]);
+    k = "cd" + String(i); prefs.putInt(k.c_str(), gCycleRuleDurMin[i]);
   }
   prefs.putFloat("phs", cfgPhScale);
   prefs.putFloat("pho", cfgPhOffset);
@@ -225,10 +285,18 @@ static void applyDefaultSettings() {
   cfgWinEnabled = 0;
   cfgWinRelay = 2;
   cfgWinAtMin = 15 * 60;
+  cfgCycleRelay = 2;
+  cfgCycleEnabled = 1;
+  cfgCycleStartMin = 0;
+  cfgCycleEndMin = 24 * 60;
+  cfgCyclePeriodMin = 120;
+  cfgCycleDurMin = 10;
   g_lastRelayStrip = false;
   g_lastRelayDrop = false;
   g_lastRelayAux = false;
   gWinRuleCount = 0;
+  gCycleRuleCount = 0;
+  g_eventLogCount = 0;
   cfgPhScale = DEFAULT_PH_FIELD_SCALE;
   cfgPhOffset = DEFAULT_PH_FIELD_OFFSET;
   cfgEcScale = DEFAULT_EC_FIELD_SCALE;
@@ -251,6 +319,42 @@ static void saveRelayStates() {
   prefs.end();
   g_relayStateDirty = false;
   lastRelayPersistMs = millis();
+}
+
+static void saveEventLogsToNvs() {
+  prefs.begin("hydro", false);
+  prefs.putInt("elc", g_eventLogCount);
+  for (int i = 0; i < g_eventLogCount; i++) {
+    String k = "el" + String(i);
+    prefs.putString(k.c_str(), g_eventLogs[i]);
+  }
+  for (int i = g_eventLogCount; i < MAX_EVENT_LOGS; i++) {
+    String k = "el" + String(i);
+    prefs.remove(k.c_str());
+  }
+  prefs.end();
+}
+
+static void addScenarioLog(const String &msg) {
+  time_t now = time(nullptr);
+  String line;
+  if (now > 1700000000) {
+    struct tm ti;
+    localtime_r(&now, &ti);
+    char tbuf[9];
+    snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", ti.tm_hour, ti.tm_min, ti.tm_sec);
+    line = "[" + String(tbuf) + "] " + msg;
+  } else {
+    line = "[" + String(millis() / 1000) + "s] " + msg;
+  }
+
+  if (g_eventLogCount < MAX_EVENT_LOGS) {
+    g_eventLogs[g_eventLogCount++] = line;
+  } else {
+    for (int i = 1; i < MAX_EVENT_LOGS; i++) g_eventLogs[i - 1] = g_eventLogs[i];
+    g_eventLogs[MAX_EVENT_LOGS - 1] = line;
+  }
+  saveEventLogsToNvs();
 }
 
 static void setRelayStrip(bool on) {
@@ -287,6 +391,30 @@ static void setRelayById(int relayId, bool on) {
   if (relayId == 0) setRelayStrip(on);
   else if (relayId == 1) setRelayDrop(on);
   else setRelayAux(on);
+}
+
+// Pompa (Role 3) acildiginda diger roleleri gecici kapat; pompa bitince eski durumlara don.
+static void applyAuxIsolationRule(bool auxOn) {
+  if (auxOn) {
+    if (!g_auxIsolationActive) {
+      g_auxPrevStrip = g_relayStrip;
+      g_auxPrevDrop = g_relayDrop;
+      g_auxIsolationActive = true;
+      addScenarioLog(String("Senaryo calisti: Su Mot. ON, SunLig=") + (g_auxPrevStrip ? "ON" : "OFF") + ", GrowLig=" + (g_auxPrevDrop ? "ON" : "OFF"));
+    }
+    if (g_relayStrip) setRelayStrip(false);
+    if (g_relayDrop) setRelayDrop(false);
+    if (!g_relayAux) setRelayAux(true);
+    return;
+  }
+
+  if (g_relayAux) setRelayAux(false);
+  if (!g_auxIsolationActive) return;
+
+  if (g_relayStrip != g_auxPrevStrip) setRelayStrip(g_auxPrevStrip);
+  if (g_relayDrop != g_auxPrevDrop) setRelayDrop(g_auxPrevDrop);
+  g_auxIsolationActive = false;
+  addScenarioLog(String("Senaryo bitti: Su Mot. OFF, SunLig=") + (g_relayStrip ? "ON" : "OFF") + ", GrowLig=" + (g_relayDrop ? "ON" : "OFF"));
 }
 
 static bool isManualOverrideActive(int relayId) {
@@ -363,6 +491,14 @@ static String relayNameById(int relayId) {
   if (relayId == 0) return "SunLig";
   if (relayId == 1) return "GrowLig";
   return "Su Mot.";
+}
+
+static bool isInWindowMinutes(int nowMin, int startMin, int endMin) {
+  startMin %= (24 * 60);
+  endMin %= (24 * 60);
+  if (startMin == endMin) return true;
+  if (startMin < endMin) return nowMin >= startMin && nowMin < endMin;
+  return nowMin >= startMin || nowMin < endMin;
 }
 
 static void drawOledStatusBar() {
@@ -550,7 +686,30 @@ static void applyAuxSchedulerIfNeeded() {
     if (nowMin != gWinRuleAtMin[i]) continue;
     if (isManualOverrideActive(relay)) continue;
     bool desired = gWinRuleEnabled[i] != 0;  // Aktif=ON, Pasif=OFF
-    if (relayStateById(relay) != desired) setRelayById(relay, desired);
+    if (relay == 2) {
+      applyAuxIsolationRule(desired);
+    } else if (relayStateById(relay) != desired) {
+      setRelayById(relay, desired);
+      addScenarioLog(String("Saate Gore: ") + relayNameById(relay) + " -> " + (desired ? "ON" : "OFF"));
+    }
+  }
+
+  for (int i = 0; i < gCycleRuleCount; i++) {
+    int relay = constrain(gCycleRuleRelay[i], 0, 2);
+    if (isManualOverrideActive(relay)) continue;
+    int elapsed = nowMin;  // Araliga gore senaryo: gun basindan itibaren periyot
+    int per = gCycleRulePeriodMin[i] < 1 ? 1 : gCycleRulePeriodMin[i];
+    int dur = gCycleRuleDurMin[i] < 0 ? 0 : gCycleRuleDurMin[i];
+    if (dur > per) dur = per;
+    bool inPulse = (elapsed % per) < dur;
+    bool activeState = (gCycleRuleEnabled[i] != 0);  // Aktif=ON, Pasif=OFF
+    bool desired = inPulse ? activeState : !activeState;
+    if (relay == 2) {
+      applyAuxIsolationRule(desired);
+    } else if (relayStateById(relay) != desired) {
+      setRelayById(relay, desired);
+      addScenarioLog(String("Araliga Gore: ") + relayNameById(relay) + " -> " + (desired ? "ON" : "OFF"));
+    }
   }
 }
 
@@ -590,6 +749,10 @@ void handleRoot() {
   html += F(".dbg-title{font-size:0.78rem;color:#94a3b8;margin-bottom:0.35rem;}");
   html += F(".dbg-val{font-size:1.18rem;font-weight:700;line-height:1.2;margin:0.08rem 0;}");
   html += F(".dbg-sub{font-size:0.82rem;color:#cbd5e1;line-height:1.3;margin:0.08rem 0;}");
+  html += F(".dbg-log{margin-top:0.55rem;background:#1e293b;border-radius:0.5rem;padding:0.55rem 0.6rem;}");
+  html += F(".dbg-log h4{margin:0 0 0.35rem;font-size:0.83rem;color:#cbd5e1;}");
+  html += F(".dbg-log-item{font-size:0.78rem;color:#cbd5e1;line-height:1.35;padding:0.14rem 0;border-bottom:1px solid #243246;}");
+  html += F(".dbg-log-item:last-child{border-bottom:none;}");
   html += F(".d-row{margin:0.35rem 0;font-size:1rem;line-height:1.35;} .d-lab{color:#94a3b8;display:inline-block;min-width:4.2rem;}");
   html += F(".hint{color:#64748b;font-size:0.78rem;margin-top:1rem;line-height:1.35;}");
   html += F(".led{margin-top:1rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
@@ -611,19 +774,21 @@ void handleRoot() {
   html += F(".sched{margin-top:1rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
   html += F(".sched h3{margin:0 0 0.5rem;font-size:0.95rem;color:#cbd5e1;}");
   html += F(".sched form{margin-top:0.4rem;}");
-  html += F(".sched .g{display:grid;grid-template-columns:1.05fr 0.9fr 0.9fr auto;gap:0.4rem;align-items:end;}");
+  html += F(".sched .g{display:flex;flex-wrap:nowrap;justify-content:space-between;gap:0.45rem;align-items:flex-end;width:100%;}");
+  html += F(".sched .g>div{display:flex;flex-direction:column;}");
   html += F(".sched label{font-size:0.78rem;color:#94a3b8;display:block;}");
   html += F(".sched select,.sched input{width:100%;max-width:10rem;padding:0.33rem;border-radius:0.4rem;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.82rem;}");
-  html += F(".sched input[type=time]{-webkit-appearance:none;appearance:none;background:#111827;color:#e2e8f0;border:1px solid #334155;border-radius:0.4rem;min-height:2.05rem;color-scheme:dark;}");
-  html += F(".sched input[type=time]::-webkit-calendar-picker-indicator{filter:invert(0.9);opacity:0.9;}");
-  html += F(".sched input[type=time]::-webkit-datetime-edit,.sched input[type=time]::-webkit-datetime-edit-fields-wrapper,.sched input[type=time]::-webkit-datetime-edit-hour-field,.sched input[type=time]::-webkit-datetime-edit-minute-field{color:#e2e8f0;}");
+  html += F(".sched input.hhmm{background:#111827;color:#e2e8f0;border:1px solid #334155;border-radius:0.4rem;min-height:2.05rem;}");
   html += F(".sched button{padding:0.45rem 0.7rem;border:none;border-radius:0.4rem;background:#2563eb;color:#fff;font-weight:600;}");
   html += F(".sum{margin-top:0.7rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
   html += F(".sum h3{margin:0 0 0.45rem;font-size:0.95rem;color:#cbd5e1;}");
   html += F(".sum .r{font-size:0.82rem;color:#cbd5e1;line-height:1.45;margin:0.15rem 0;}");
-  html += F(".rule-line{display:grid;grid-template-columns:1.1fr 0.9fr 0.85fr auto auto;gap:0.35rem;align-items:end;margin:0.25rem 0 0.55rem;}");
-  html += F(".rule-line select,.rule-line input{max-width:none;padding:0.3rem;border-radius:0.35rem;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.8rem;}");
-  html += F(".rule-line button{padding:0.3rem 0.55rem;border:none;border-radius:0.35rem;color:#fff;font-size:0.78rem;}");
+  html += F(".rule-line,.rule-line-cycle,.cycle-create,.cycle-create-mid{display:flex;flex-wrap:nowrap;justify-content:space-between;align-items:center;gap:0.45rem;width:100%;}");
+  html += F(".rule-line{margin:0.25rem 0 0.55rem;} .rule-line-cycle{margin:0.25rem 0 0.55rem;} .cycle-create{margin:0.35rem 0 0.6rem;}");
+  html += F(".rule-line select,.rule-line input,.rule-line-cycle select,.rule-line-cycle input,.cycle-create select,.cycle-create input,.sched .g select,.sched .g input{width:5.1rem;max-width:5.1rem;height:2.05rem;min-height:2.05rem;padding:0 0.45rem;border-radius:0.4rem;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.82rem;box-sizing:border-box;}");
+  html += F(".rule-line button,.rule-line-cycle button,.cycle-create button,.sched .g button{width:5.1rem;max-width:5.1rem;height:2.05rem;min-height:2.05rem;padding:0 0.45rem;border:none;border-radius:0.4rem;color:#fff;font-size:0.8rem;box-sizing:border-box;}");
+  html += F(".rule-line .w-time,.rule-line-cycle .w-time,.cycle-create .w-time,.rule-line .w-num,.rule-line-cycle .w-num,.cycle-create .w-num{text-align:center;}");
+  html += F(".rule-line .w-relay,.rule-line-cycle .w-relay,.cycle-create .w-relay,.rule-line .w-time,.rule-line-cycle .w-time,.cycle-create .w-time,.rule-line .w-num,.rule-line-cycle .w-num,.cycle-create .w-num{min-width:0;}");
   html += F(".btn-save{background:#2563eb;} .btn-del{background:#b91c1c;}");
   html += F("</style></head><body>");
 
@@ -677,6 +842,17 @@ void handleRoot() {
     html += F("KB / ");
     html += String(heapUsedKb);
     html += F("KB (mevcut/kullanilan)</div></div></div>");
+    html += F("<div class=\"dbg-log\"><h4>Senaryo Log</h4>");
+    if (g_eventLogCount == 0) {
+      html += F("<div class=\"dbg-log-item\">- kayit yok</div>");
+    } else {
+      for (int i = g_eventLogCount - 1; i >= 0; i--) {
+        html += F("<div class=\"dbg-log-item\">");
+        html += g_eventLogs[i];
+        html += F("</div>");
+      }
+    }
+    html += F("</div>");
     html += F("<div class=\"d-row\" style=\"margin-top:0.5rem;color:#64748b;font-size:0.85rem;\">OLED cihaz: ");
     html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL");
     html += F(" (buton)</div>");
@@ -729,11 +905,39 @@ void handleRoot() {
   html += F(">Pasif</option><option value=\"1\"");
   if (cfgWinEnabled) html += F(" selected");
   html += F(">Aktif</option></select></div>");
-  html += F("<div><label>Saat</label><input type=\"time\" name=\"start\" value=\"");
+  html += F("<div><label>Saat</label><input type=\"text\" class=\"hhmm\" name=\"start\" maxlength=\"5\" placeholder=\"HH:MM\" value=\"");
   html += formatMinutesToTime(cfgWinAtMin);
   html += F("\"></div>");
   html += F("<div><label>&nbsp;</label><button type=\"submit\">Kaydet</button></div>");
   html += F("</div></form></div>");
+
+  html += F("<div class=\"sched\"><h3>Araliga Gore</h3><form method=\"POST\" action=\"/sched/save\">");
+  html += F("<input type=\"hidden\" name=\"type\" value=\"cycle\">");
+  html += F("<div class=\"cycle-create\">");
+  html += F("<div><label>Role</label><select name=\"relay\" class=\"w-relay\">");
+  html += F("<option value=\"0\"");
+  if (cfgCycleRelay == 0) html += F(" selected");
+  html += F(">SunLig</option><option value=\"1\"");
+  if (cfgCycleRelay == 1) html += F(" selected");
+  html += F(">GrowLig</option><option value=\"2\"");
+  if (cfgCycleRelay == 2) html += F(" selected");
+  html += F(">Su Mot.</option></select></div>");
+  html += F("<div class=\"cycle-create-mid\">");
+  html += F("<div><label>Durum</label><select name=\"enabled\" class=\"w-num\">");
+  html += F("<option value=\"1\"");
+  if (cfgCycleEnabled) html += F(" selected");
+  html += F(">Aktif</option><option value=\"0\"");
+  if (!cfgCycleEnabled) html += F(" selected");
+  html += F(">Pasif</option></select></div>");
+  html += F("<div><label>Periyot Dk</label><input type=\"number\" class=\"w-num\" name=\"period\" min=\"1\" step=\"1\" value=\"");
+  html += String(cfgCyclePeriodMin);
+  html += F("\" placeholder=\"Periyot Dk\"></div>");
+  html += F("<div><label>Durum Dk</label><input type=\"number\" class=\"w-num\" name=\"dur\" min=\"0\" step=\"1\" value=\"");
+  html += String(cfgCycleDurMin);
+  html += F("\" placeholder=\"Durum Dk\"></div>");
+  html += F("</div>");
+  html += F("<div><label>&nbsp;</label><button type=\"submit\">Kaydet</button></div></div></form></div>");
+
   html += F("<div class=\"sum\"><h3>Kayitli Senaryolar</h3>");
   if (gWinRuleCount == 0) {
     html += F("<div class=\"r\">- yok</div>");
@@ -746,7 +950,7 @@ void handleRoot() {
       html += F("<input type=\"hidden\" name=\"idx\" value=\"");
       html += String(i);
       html += F("\">");
-      html += F("<select name=\"relay\" disabled>");
+      html += F("<select name=\"relay\" class=\"w-relay\" disabled>");
       html += F("<option value=\"0\"");
       if (gWinRuleRelay[i] == 0) html += F(" selected");
       html += F(">SunLig</option><option value=\"1\"");
@@ -760,7 +964,7 @@ void handleRoot() {
       html += F(">Pasif</option><option value=\"1\"");
       if (gWinRuleEnabled[i]) html += F(" selected");
       html += F(">Aktif</option></select>");
-      html += F("<input type=\"time\" name=\"at\" value=\"");
+      html += F("<input type=\"text\" class=\"hhmm\" name=\"at\" maxlength=\"5\" placeholder=\"HH:MM\" value=\"");
       html += formatMinutesToTime(gWinRuleAtMin[i]);
       html += F("\" disabled>");
       html += F("<button type=\"button\" class=\"btn-save\" data-editing=\"0\" onclick=\"toggleRuleEdit(");
@@ -770,8 +974,45 @@ void handleRoot() {
       html += F("</form>");
     }
   }
+  html += F("<div class=\"r\" style=\"color:#94a3b8;margin-top:0.45rem;\">Araliga Gore:</div>");
+  if (gCycleRuleCount == 0) {
+    html += F("<div class=\"r\">- yok</div>");
+  } else {
+    for (int i = 0; i < gCycleRuleCount; i++) {
+      html += F("<form method=\"POST\" action=\"/sched/rule\" class=\"rule-line-cycle\" id=\"rulec-");
+      html += String(i);
+      html += F("\">");
+      html += F("<input type=\"hidden\" name=\"type\" value=\"cycle\"><input type=\"hidden\" name=\"idx\" value=\"");
+      html += String(i);
+      html += F("\">");
+      html += F("<select name=\"relay\" disabled>");
+      html += F("<option value=\"0\"");
+      if (gCycleRuleRelay[i] == 0) html += F(" selected");
+      html += F(">SunLig</option><option value=\"1\"");
+      if (gCycleRuleRelay[i] == 1) html += F(" selected");
+      html += F(">GrowLig</option><option value=\"2\"");
+      if (gCycleRuleRelay[i] == 2) html += F(" selected");
+      html += F(">Su Mot.</option></select>");
+      html += F("<select name=\"enabled\" class=\"w-num\" disabled>");
+      html += F("<option value=\"1\"");
+      if (gCycleRuleEnabled[i]) html += F(" selected");
+      html += F(">Aktif</option><option value=\"0\"");
+      if (!gCycleRuleEnabled[i]) html += F(" selected");
+      html += F(">Pasif</option></select>");
+      html += F("<input type=\"number\" class=\"w-num\" name=\"period\" value=\"");
+      html += String(gCycleRulePeriodMin[i]);
+      html += F("\" disabled>");
+      html += F("<input type=\"number\" class=\"w-num\" name=\"dur\" value=\"");
+      html += String(gCycleRuleDurMin[i]);
+      html += F("\" disabled>");
+      html += F("<button type=\"button\" class=\"btn-save\" data-editing=\"0\" onclick=\"toggleRuleCycleEdit(");
+      html += String(i);
+      html += F(")\">Guncelle</button>");
+      html += F("<button type=\"submit\" name=\"delete\" value=\"1\" class=\"btn-del\">Sil</button></form>");
+    }
+  }
   html += F("</div>");
-  html += F("<script>function toggleRuleEdit(i){const f=document.getElementById('rule-'+i);if(!f)return;const b=f.querySelector('.btn-save');if(!b)return;const fields=f.querySelectorAll('select,input[type=time]');const editing=b.getAttribute('data-editing')==='1';if(!editing){fields.forEach(el=>el.disabled=false);b.setAttribute('data-editing','1');b.textContent='Kaydet';return;}f.submit();}</script>");
+  html += F("<script>function toggleRuleEdit(i){const f=document.getElementById('rule-'+i);if(!f)return;const b=f.querySelector('.btn-save');if(!b)return;const fields=f.querySelectorAll('select,input.hhmm');const editing=b.getAttribute('data-editing')==='1';if(!editing){fields.forEach(el=>el.disabled=false);b.setAttribute('data-editing','1');b.textContent='Kaydet';return;}f.submit();}function toggleRuleCycleEdit(i){const f=document.getElementById('rulec-'+i);if(!f)return;const b=f.querySelector('.btn-save');if(!b)return;const fields=f.querySelectorAll('select,input');const editing=b.getAttribute('data-editing')==='1';if(!editing){fields.forEach(el=>{if(el.name!=='type'&&el.name!=='idx'&&el.name!=='delete')el.disabled=false;});b.setAttribute('data-editing','1');b.textContent='Kaydet';return;}f.submit();}</script>");
   }
 
   if (webDebug) {
@@ -934,6 +1175,25 @@ void handleScheduleSave() {
       gWinRuleCount++;
     }
     g_manualOverrideUntilMs[cfgWinRelay] = 0;  // Yeni kural kaydinda scheduler hemen devreye girsin
+  } else if (type == "cycle") {
+    if (server.hasArg("relay")) cfgCycleRelay = constrain(server.arg("relay").toInt(), 0, 2);
+    if (server.hasArg("enabled")) cfgCycleEnabled = constrain(server.arg("enabled").toInt(), 0, 1);
+    if (server.hasArg("period")) {
+      long v = server.arg("period").toInt();
+      cfgCyclePeriodMin = (v < 1) ? 1 : (int)v;
+    }
+    if (server.hasArg("dur")) {
+      long v = server.arg("dur").toInt();
+      cfgCycleDurMin = (v < 0) ? 0 : (int)v;
+    }
+    if (gCycleRuleCount < MAX_SCHED_RULES) {
+      gCycleRuleRelay[gCycleRuleCount] = cfgCycleRelay;
+      gCycleRuleEnabled[gCycleRuleCount] = cfgCycleEnabled;
+      gCycleRulePeriodMin[gCycleRuleCount] = cfgCyclePeriodMin;
+      gCycleRuleDurMin[gCycleRuleCount] = cfgCycleDurMin;
+      gCycleRuleCount++;
+    }
+    g_manualOverrideUntilMs[cfgCycleRelay] = 0;
   }
 
   saveSettings();
@@ -964,6 +1224,30 @@ void handleScheduleRuleAction() {
         gWinRuleAtMin[idx] = parseTimeArgToMinutes(server.arg("at"), gWinRuleAtMin[idx]);
       }
       g_manualOverrideUntilMs[constrain(gWinRuleRelay[idx], 0, 2)] = 0;
+    }
+  } else if (type == "cycle" && idx >= 0 && idx < gCycleRuleCount) {
+    if (server.hasArg("delete") && server.arg("delete") == "1") {
+      for (int i = idx + 1; i < gCycleRuleCount; i++) {
+        gCycleRuleRelay[i - 1] = gCycleRuleRelay[i];
+        gCycleRuleEnabled[i - 1] = gCycleRuleEnabled[i];
+        gCycleRuleStartMin[i - 1] = gCycleRuleStartMin[i];
+        gCycleRuleEndMin[i - 1] = gCycleRuleEndMin[i];
+        gCycleRulePeriodMin[i - 1] = gCycleRulePeriodMin[i];
+        gCycleRuleDurMin[i - 1] = gCycleRuleDurMin[i];
+      }
+      gCycleRuleCount--;
+    } else {
+      if (server.hasArg("relay")) gCycleRuleRelay[idx] = constrain(server.arg("relay").toInt(), 0, 2);
+      if (server.hasArg("enabled")) gCycleRuleEnabled[idx] = constrain(server.arg("enabled").toInt(), 0, 1);
+      if (server.hasArg("period")) {
+        long v = server.arg("period").toInt();
+        gCycleRulePeriodMin[idx] = (v < 1) ? 1 : (int)v;
+      }
+      if (server.hasArg("dur")) {
+        long v = server.arg("dur").toInt();
+        gCycleRuleDurMin[idx] = (v < 0) ? 0 : (int)v;
+      }
+      g_manualOverrideUntilMs[constrain(gCycleRuleRelay[idx], 0, 2)] = 0;
     }
   }
   saveSettings();
@@ -1001,7 +1285,7 @@ void handleLed() {
     g_manualOverrideUntilMs[1] = millis() + MANUAL_OVERRIDE_MS;
   } else if (t == "aux") {
     bool target = (s == "toggle") ? !g_relayAux : (s == "on");
-    setRelayAux(target);
+    applyAuxIsolationRule(target);
     g_manualOverrideUntilMs[2] = millis() + MANUAL_OVERRIDE_MS;
   }
 
@@ -1068,6 +1352,9 @@ void handleFirmwareUploadDone() {
 }
 
 static const unsigned long WIFI_RETRY_INTERVAL_MS = 8000;
+static const unsigned long WIFI_AUTO_RECOVERY_MS = 90000;  // 90 sn wifi yoksa reboot
+unsigned long wifiDownSinceMs = 0;
+bool g_hadWifiConnection = false;
 
 static void registerHttpRoutesIfNeeded() {
   if (s_httpRoutesRegistered) return;
@@ -1137,11 +1424,21 @@ static void maintainWifi() {
   g_wifiOk = (WiFi.status() == WL_CONNECTED);
 
   if (g_wifiOk) {
+    g_hadWifiConnection = true;
+    wifiDownSinceMs = 0;
     if (!s_networkStackStarted) {
       Serial.println(F("WiFi baglandi, ag servisleri basliyor"));
       startNetworkStack();
     }
     return;
+  }
+
+  if (wifiDownSinceMs == 0) {
+    wifiDownSinceMs = millis();
+  } else if (g_hadWifiConnection && (millis() - wifiDownSinceMs >= WIFI_AUTO_RECOVERY_MS)) {
+    Serial.println(F("WiFi uzun sure yok, otomatik yeniden baslatma..."));
+    delay(150);
+    ESP.restart();
   }
 
   if (millis() - lastWifiRetryMs >= WIFI_RETRY_INTERVAL_MS) {

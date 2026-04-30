@@ -6,7 +6,7 @@ Bu proje ESP32 ile su kalitesi takibi yapar:
 - `pH`
 - OLED ekranda anlik gosterim
 - 3 kanalli role kontrolu (serit LED, damla LED, pompa/role3)
-- Webden saat bazli otomasyon (tek tetik kural listesi)
+- Webden saat bazli + periyodik otomasyon (kural listeleri)
 
 Kod dosyasi: `esp32_oled_status.ino`
 
@@ -14,13 +14,15 @@ Kod dosyasi: `esp32_oled_status.ino`
 
 - **Role pinleri:** `GPIO32` (Serit LED), `GPIO33` (Damla LED), `GPIO26` (Role 3/Pompa)
 - **Boot davranisi:** Cihaz acilisinda roleler once `OFF` baslar; sonra NVS'teki son role durumlari **sirali** geri yuklenir (ani akim/kilitlenme riskini azaltir).
-- **Saat bazli otomasyon:** Ana sayfada **Saate Gore** bolumu vardir. Her kural `Role + Durum(Aktif/Pasif) + Saat` seklindedir. Saat gelince roleye tek komut uygulanir.
-- **Kural listesi:** Birden fazla saat kurali eklenebilir (maks. 8), NVS'te kalicidir, restart sonrasi korunur.
+- **Saate Gore otomasyon:** Ana sayfada **Saate Gore** bolumu vardir. Her kural `Role + Durum(Aktif/Pasif) + Saat` seklindedir. Saat gelince roleye tek komut uygulanir.
+- **Araliga Gore otomasyon:** Her kural `Role + Durum + Periyot Dk + Durum Dk` seklindedir. Baslangic/bitis saati yoktur; gun icinde periyodik olarak uygulanir.
+- **Kural listeleri:** Birden fazla saat/periyot kurali eklenebilir (limit: 64), NVS'te kalicidir, restart sonrasi korunur.
 - **Manuel override:** Webden manuel role ac/kapa yapildiginda scheduler ilgili roleye kisa sure (varsayilan 15 dk) dokunmaz. Yeni kural kaydinda override sifirlanir.
+- **Pompa izolasyon kurali:** `Su Mot.` (Role 3) acildiginda `SunLig/GrowLig` gecici kapatilir; pompa bitince onceki durumlarina geri doner.
 - **Kalibrasyon formati:** TDS/EC kalibrasyonu 6 noktada `RAW + Cihaz PPM + Cihaz EC(uS)` seklinde girilir.
 - **Dashboard adlandirma:** Role isimleri arayuzde `SunLig`, `GrowLig`, `Su Mot.` olarak gosterilir.
 - **LED kartlari:** Ana sayfada 3 kartli kontrol vardir; her kartta `On/Off`, ustte toplu `On/Off`.
-- **Debug web gorunumu:** Sadece olcum ve sistem degerleri (RAW/TDS/EC/pH/pV/pA/Heap) gosterilir; kontrol ve senaryo bloklari gizlenir.
+- **Debug web gorunumu:** Olcum/sistem degerleri (RAW/TDS/EC/pH/pV/pA/Heap) ve senaryo logu gosterilir.
 - **Saatli senaryo mantigi:** Kural `Role + Durum + Saat` seklinde tek tetikleyicidir; bitis saati yoktur. Farkli saatte ters durum icin ikinci kural eklenir.
 
 ## Surum notlari
@@ -49,6 +51,7 @@ Alternatif: Tum proje klasorunu (`.ino` + `wifi_secrets.h` birlikte) sketch klas
 - ESP32 acildiktan sonra WiFi **arka planda** baglanir; baglanti gecikirse OLED ve sensor yine calisir, her **~8 sn**'de bir yeniden denenir.
 - Baglanti gelince web/NTP/OTA otomatik baslar; Serial'da `Web: http://...` gorunur.
 - NTP ilk gelmezse **~25 sn** aralikla tekrar denenir (adaptör/router gecikmesi icin).
+- WiFi daha once bagli iken uzun sure (varsayilan ~90 sn) geri gelmezse cihaz otomatik restart ile toparlanmaya calisir.
 - Ayni WiFi'deki telefon veya bilgisayardan bu IP'ye gidince web arayuzu acilir.
 - Ustte **Normal** / **Debug** sadece **web sayfasini** etkiler; OLED modunu degistirmez.
 - OLED modu yalnizca **fiziksel buton** (GPIO 27) ile degisir. Web ve OLED birbirinden bagimsiz secilebilir.
@@ -220,6 +223,7 @@ Asagidaki degerler ayni suya kademeli besin eklenerek alinmistir:
 - Ayarlar `Preferences` namespace: `hydro` altinda saklanir.
 - Webden kaydedilen degerler yeniden baslatmadan aktif olur.
 - Cihaz acilisinda kayitli degerler otomatik yuklenir.
+- Senaryo log kayitlari da NVS'te tutulur (son 16 kayit).
 - `settings` sayfasindan degistirebilecegin alanlar:
   - `EC uS/PPM` faktor
   - `pH4`, `pH7`, `pH10` voltajlari
