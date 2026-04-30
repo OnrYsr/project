@@ -30,6 +30,12 @@
 #define TDS_PIN 34
 #define PH_PIN 35
 #define MODE_BTN_PIN 27
+#define RELAY_STRIP_PIN 32
+#define RELAY_DROP_PIN 33
+#define RELAY_AUX_PIN 26
+// 1: pin LOW = role ON (yaygin 2 kanalli moduller). 0: pin HIGH = ON.
+#define RELAY_ACTIVE_LOW 1
+#define RELAY_SEQ_DELAY_MS 500
 
 // OTA: Arduino IDE -> Port -> ag portu | Tarayici -> http://<IP>/ota
 #ifndef OTA_HOSTNAME
@@ -64,6 +70,13 @@ bool g_debugModeSnapshot = false;
 bool g_wifiOk = false;
 bool g_webStarted = false;
 bool g_otaStarted = false;
+bool g_relayStrip = false;
+bool g_relayDrop = false;
+bool g_relayAux = false;
+bool g_lastRelayStrip = false;
+bool g_lastRelayDrop = false;
+bool g_lastRelayAux = false;
+bool g_relayStateDirty = false;
 char g_clockStr[6] = "--:--";
 
 const float VREF = 3.3;          // ESP32 ADC reference voltage
@@ -84,8 +97,11 @@ unsigned long lastSampleMs = 0;
 unsigned long lastButtonMs = 0;
 unsigned long lastWifiRetryMs = 0;
 unsigned long lastNtpRetryMs = 0;
+unsigned long bootMs = 0;
+unsigned long lastRelayPersistMs = 0;
 static bool s_httpRoutesRegistered = false;
 static bool s_networkStackStarted = false;
+bool g_bootRelayRestoreDone = false;
 bool debugMode = false;
 bool lastButtonState = HIGH;
 bool forceRefresh = true;
@@ -100,6 +116,7 @@ const unsigned long DEBUG_INTERVAL_MS = 1000;
 const int CAL_POINTS = 6;
 const float DEFAULT_RAW_POINTS[CAL_POINTS] = {45, 183, 236, 469, 911, 1019};
 const float DEFAULT_PPM_POINTS[CAL_POINTS] = {83, 218, 268, 487, 816, 992};
+const float DEFAULT_EC_POINTS[CAL_POINTS] = {166, 436, 536, 974, 1632, 1984};
 
 float cfgEcUsPerPpm = DEFAULT_EC_US_PER_PPM;
 float cfgPhCalV4 = DEFAULT_PH_CAL_V4;
@@ -107,6 +124,18 @@ float cfgPhCalV7 = DEFAULT_PH_CAL_V7;
 float cfgPhCalV10 = DEFAULT_PH_CAL_V10;
 float cfgRawPoints[CAL_POINTS];
 float cfgPpmPoints[CAL_POINTS];
+float cfgEcPoints[CAL_POINTS];
+// Ana sayfa scheduler ayarlari
+int cfgWinEnabled = 0;           // saate gore ac/kapa aktif mi
+int cfgWinRelay = 2;             // 0: serit, 1: damla, 2: role3
+int cfgWinAtMin = 15 * 60;
+const int MAX_SCHED_RULES = 8;
+int gWinRuleCount = 0;
+int gWinRuleRelay[MAX_SCHED_RULES];
+int gWinRuleEnabled[MAX_SCHED_RULES];
+int gWinRuleAtMin[MAX_SCHED_RULES];
+const unsigned long MANUAL_OVERRIDE_MS = 15UL * 60UL * 1000UL;  // 15 dk
+unsigned long g_manualOverrideUntilMs[3] = {0, 0, 0};
 // Saha düzeltmesi (besin/kabin suyu; buffer sonrasi ince ayar). ph' = ph * phs + pho, ec' = ec * ecs + eco
 float cfgPhScale = DEFAULT_PH_FIELD_SCALE;
 float cfgPhOffset = DEFAULT_PH_FIELD_OFFSET;
@@ -122,8 +151,25 @@ static void loadSettings() {
   for (int i = 0; i < CAL_POINTS; i++) {
     String rk = "r" + String(i);
     String pk = "p" + String(i);
+    String ek = "e" + String(i);
     cfgRawPoints[i] = prefs.getFloat(rk.c_str(), DEFAULT_RAW_POINTS[i]);
     cfgPpmPoints[i] = prefs.getFloat(pk.c_str(), DEFAULT_PPM_POINTS[i]);
+    cfgEcPoints[i] = prefs.getFloat(ek.c_str(), DEFAULT_EC_POINTS[i]);
+  }
+  cfgWinEnabled = prefs.getInt("swe", 0);
+  cfgWinRelay = prefs.getInt("swr", 2);
+  cfgWinAtMin = prefs.getInt("sws", 15 * 60);
+  g_lastRelayStrip = prefs.getBool("lrs", false);
+  g_lastRelayDrop = prefs.getBool("lrd", false);
+  g_lastRelayAux = prefs.getBool("lra", false);
+  gWinRuleCount = prefs.getInt("wcnt", 0);
+  if (gWinRuleCount < 0) gWinRuleCount = 0;
+  if (gWinRuleCount > MAX_SCHED_RULES) gWinRuleCount = MAX_SCHED_RULES;
+  for (int i = 0; i < gWinRuleCount; i++) {
+    String k;
+    k = "wr" + String(i); gWinRuleRelay[i] = prefs.getInt(k.c_str(), 2);
+    k = "we" + String(i); gWinRuleEnabled[i] = prefs.getInt(k.c_str(), 1);
+    k = "ws" + String(i); gWinRuleAtMin[i] = prefs.getInt(k.c_str(), 0);
   }
   cfgPhScale = prefs.getFloat("phs", DEFAULT_PH_FIELD_SCALE);
   cfgPhOffset = prefs.getFloat("pho", DEFAULT_PH_FIELD_OFFSET);
@@ -141,8 +187,23 @@ static void saveSettings() {
   for (int i = 0; i < CAL_POINTS; i++) {
     String rk = "r" + String(i);
     String pk = "p" + String(i);
+    String ek = "e" + String(i);
     prefs.putFloat(rk.c_str(), cfgRawPoints[i]);
     prefs.putFloat(pk.c_str(), cfgPpmPoints[i]);
+    prefs.putFloat(ek.c_str(), cfgEcPoints[i]);
+  }
+  prefs.putInt("swe", cfgWinEnabled);
+  prefs.putInt("swr", cfgWinRelay);
+  prefs.putInt("sws", cfgWinAtMin);
+  prefs.putBool("lrs", g_lastRelayStrip);
+  prefs.putBool("lrd", g_lastRelayDrop);
+  prefs.putBool("lra", g_lastRelayAux);
+  prefs.putInt("wcnt", gWinRuleCount);
+  for (int i = 0; i < gWinRuleCount; i++) {
+    String k;
+    k = "wr" + String(i); prefs.putInt(k.c_str(), gWinRuleRelay[i]);
+    k = "we" + String(i); prefs.putInt(k.c_str(), gWinRuleEnabled[i]);
+    k = "ws" + String(i); prefs.putInt(k.c_str(), gWinRuleAtMin[i]);
   }
   prefs.putFloat("phs", cfgPhScale);
   prefs.putFloat("pho", cfgPhOffset);
@@ -159,11 +220,134 @@ static void applyDefaultSettings() {
   for (int i = 0; i < CAL_POINTS; i++) {
     cfgRawPoints[i] = DEFAULT_RAW_POINTS[i];
     cfgPpmPoints[i] = DEFAULT_PPM_POINTS[i];
+    cfgEcPoints[i] = DEFAULT_EC_POINTS[i];
   }
+  cfgWinEnabled = 0;
+  cfgWinRelay = 2;
+  cfgWinAtMin = 15 * 60;
+  g_lastRelayStrip = false;
+  g_lastRelayDrop = false;
+  g_lastRelayAux = false;
+  gWinRuleCount = 0;
   cfgPhScale = DEFAULT_PH_FIELD_SCALE;
   cfgPhOffset = DEFAULT_PH_FIELD_OFFSET;
   cfgEcScale = DEFAULT_EC_FIELD_SCALE;
   cfgEcOffset = DEFAULT_EC_FIELD_OFFSET;
+}
+
+static inline uint8_t relayLevel(bool on) {
+#if RELAY_ACTIVE_LOW
+  return on ? LOW : HIGH;
+#else
+  return on ? HIGH : LOW;
+#endif
+}
+
+static void saveRelayStates() {
+  prefs.begin("hydro", false);
+  prefs.putBool("lrs", g_lastRelayStrip);
+  prefs.putBool("lrd", g_lastRelayDrop);
+  prefs.putBool("lra", g_lastRelayAux);
+  prefs.end();
+  g_relayStateDirty = false;
+  lastRelayPersistMs = millis();
+}
+
+static void setRelayStrip(bool on) {
+  if (g_relayStrip == on) return;
+  digitalWrite(RELAY_STRIP_PIN, relayLevel(on));
+  g_relayStrip = on;
+  g_lastRelayStrip = on;
+  g_relayStateDirty = true;
+}
+
+static void setRelayDrop(bool on) {
+  if (g_relayDrop == on) return;
+  digitalWrite(RELAY_DROP_PIN, relayLevel(on));
+  g_relayDrop = on;
+  g_lastRelayDrop = on;
+  g_relayStateDirty = true;
+}
+
+static void setRelayAux(bool on) {
+  if (g_relayAux == on) return;
+  digitalWrite(RELAY_AUX_PIN, relayLevel(on));
+  g_relayAux = on;
+  g_lastRelayAux = on;
+  g_relayStateDirty = true;
+}
+
+static bool relayStateById(int relayId) {
+  if (relayId == 0) return g_relayStrip;
+  if (relayId == 1) return g_relayDrop;
+  return g_relayAux;
+}
+
+static void setRelayById(int relayId, bool on) {
+  if (relayId == 0) setRelayStrip(on);
+  else if (relayId == 1) setRelayDrop(on);
+  else setRelayAux(on);
+}
+
+static bool isManualOverrideActive(int relayId) {
+  if (relayId < 0 || relayId > 2) return false;
+  unsigned long untilMs = g_manualOverrideUntilMs[relayId];
+  if (untilMs == 0) return false;
+  if ((long)(untilMs - millis()) > 0) return true;
+  g_manualOverrideUntilMs[relayId] = 0;
+  return false;
+}
+
+static void persistRelayStatesIfNeeded() {
+  // NVS'ye her role degisiminde aninda yazmak bazen sistemi kasar.
+  // Degisiklikleri gecikmeli toplu yazarak kilitlenme riskini azaltiriz.
+  if (!g_relayStateDirty) return;
+  if (millis() - lastRelayPersistMs < 1500) return;
+  saveRelayStates();
+}
+
+// Sirali baslatma: iki LED ayni anda enerjilenince PSU dalgalanmasi / hata olmasin.
+static void sequentialStartLeds() {
+  if (!g_relayStrip) {
+    setRelayStrip(true);
+    Serial.println(F("LED: serit ON"));
+    delay(RELAY_SEQ_DELAY_MS);
+  }
+  if (!g_relayDrop) {
+    setRelayDrop(true);
+    Serial.println(F("LED: damla ON"));
+    delay(RELAY_SEQ_DELAY_MS);
+  }
+  if (!g_relayAux) {
+    setRelayAux(true);
+    Serial.println(F("LED: role3 ON"));
+  }
+}
+
+static void allLedsOff() {
+  setRelayAux(false);
+  delay(50);
+  setRelayDrop(false);
+  delay(50);
+  setRelayStrip(false);
+  Serial.println(F("LED: hepsi OFF"));
+}
+
+static void restoreLastRelayStatesSequentially() {
+  if (g_bootRelayRestoreDone) return;
+  g_bootRelayRestoreDone = true;
+  Serial.println(F("Boot restore: roleler son duruma sirali alinacak"));
+  if (g_lastRelayStrip) {
+    setRelayStrip(true);
+    delay(RELAY_SEQ_DELAY_MS);
+  }
+  if (g_lastRelayDrop) {
+    setRelayDrop(true);
+    delay(RELAY_SEQ_DELAY_MS);
+  }
+  if (g_lastRelayAux) {
+    setRelayAux(true);
+  }
 }
 
 static int wifiSignalBars() {
@@ -259,6 +443,38 @@ float rawToPpmCalibrated(float rawValue) {
   return ppm < 0 ? 0 : ppm;
 }
 
+float rawToEcCalibrated(float rawValue) {
+  if (rawValue <= cfgRawPoints[0]) {
+    float x1 = cfgRawPoints[0];
+    float x2 = cfgRawPoints[1];
+    float y1 = cfgEcPoints[0];
+    float y2 = cfgEcPoints[1];
+    float t = (rawValue - x1) / (x2 - x1);
+    float ec = y1 + t * (y2 - y1);
+    return ec < 0 ? 0 : ec;
+  }
+
+  for (int i = 0; i < CAL_POINTS - 1; i++) {
+    float x1 = cfgRawPoints[i];
+    float x2 = cfgRawPoints[i + 1];
+    float y1 = cfgEcPoints[i];
+    float y2 = cfgEcPoints[i + 1];
+
+    if (rawValue >= x1 && rawValue <= x2) {
+      float t = (rawValue - x1) / (x2 - x1);
+      return y1 + t * (y2 - y1);
+    }
+  }
+
+  float x1 = cfgRawPoints[CAL_POINTS - 2];
+  float x2 = cfgRawPoints[CAL_POINTS - 1];
+  float y1 = cfgEcPoints[CAL_POINTS - 2];
+  float y2 = cfgEcPoints[CAL_POINTS - 1];
+  float t = (rawValue - x1) / (x2 - x1);
+  float ec = y1 + t * (y2 - y1);
+  return ec < 0 ? 0 : ec;
+}
+
 float readPhValue(float &phAdcOut, float &phVoltageOut) {
   const int sampleCount = 20;
   uint32_t total = 0;
@@ -291,26 +507,69 @@ float readPhValue(float &phAdcOut, float &phVoltageOut) {
   return ph;
 }
 
+static int clampMinuteOfDay(int m) {
+  if (m < 0) return 0;
+  if (m > 24 * 60) return 24 * 60;
+  return m;
+}
+
+static int parseTimeArgToMinutes(const String &s, int fallback) {
+  int colon = s.indexOf(':');
+  if (colon <= 0) return fallback;
+  int hh = s.substring(0, colon).toInt();
+  int mm = s.substring(colon + 1).toInt();
+  if (hh < 0 || hh > 24 || mm < 0 || mm > 59) return fallback;
+  if (hh == 24 && mm != 0) return fallback;
+  return hh * 60 + mm;
+}
+
+static String formatMinutesToTime(int totalMin) {
+  totalMin = clampMinuteOfDay(totalMin);
+  int hh = totalMin / 60;
+  int mm = totalMin % 60;
+  if (hh == 24) hh = 0;
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%02d:%02d", hh, mm);
+  return String(buf);
+}
+
+static void applyAuxSchedulerIfNeeded() {
+  time_t now = time(nullptr);
+  if (now <= 1700000000) return;  // saat senkron degilse roleye dokunma
+  struct tm ti;
+  localtime_r(&now, &ti);
+  int nowMin = ti.tm_hour * 60 + ti.tm_min;
+  for (int i = 0; i < gWinRuleCount; i++) {
+    int relay = constrain(gWinRuleRelay[i], 0, 2);
+    if (nowMin != gWinRuleAtMin[i]) continue;
+    if (isManualOverrideActive(relay)) continue;
+    bool desired = gWinRuleEnabled[i] != 0;  // Aktif=ON, Pasif=OFF
+    if (relayStateById(relay) != desired) setRelayById(relay, desired);
+  }
+}
+
 void handleRoot() {
   // Web gorunumu OLED'den bagimsiz: ?view=normal | ?view=debug
   String view = server.hasArg("view") ? server.arg("view") : "normal";
   view.toLowerCase();
   bool webDebug = (view == "debug");
-  int refreshSec = webDebug ? 1 : 3;
+  int refreshSec = webDebug ? 1 : 0;
   String viewNext = webDebug ? "debug" : "normal";
 
   String html;
   html.reserve(2200);
   html += F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
   html += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-  html += F("<meta http-equiv=\"refresh\" content=\"");
-  html += String(refreshSec);
-  html += F(";url=/?view=");
-  html += viewNext;
-  html += F("\">");
+  if (refreshSec > 0) {
+    html += F("<meta http-equiv=\"refresh\" content=\"");
+    html += String(refreshSec);
+    html += F(";url=/?view=");
+    html += viewNext;
+    html += F("\">");
+  }
   html += F("<title>Hydro Monitor</title>");
   html += F("<style>");
-  html += F("body{font-family:system-ui,sans-serif;margin:1rem;background:#0f172a;color:#e2e8f0;max-width:22rem;}");
+  html += F("body{font-family:system-ui,sans-serif;margin:1rem auto;padding:0 0.5rem;background:#0f172a;color:#e2e8f0;max-width:62rem;}");
   html += F(".nav{display:flex;gap:0.5rem;margin-bottom:1rem;}");
   html += F(".nav a{flex:1;text-align:center;padding:0.55rem 0.4rem;border-radius:0.5rem;text-decoration:none;font-weight:600;font-size:0.9rem;}");
   html += F(".nav a.on{background:#3b82f6;color:#fff;}");
@@ -320,6 +579,24 @@ void handleRoot() {
   html += F(".n-lab{color:#94a3b8;font-size:0.95rem;}");
   html += F(".d-row{margin:0.35rem 0;font-size:1rem;line-height:1.35;} .d-lab{color:#94a3b8;display:inline-block;min-width:4.2rem;}");
   html += F(".hint{color:#64748b;font-size:0.78rem;margin-top:1rem;line-height:1.35;}");
+  html += F(".led{margin-top:1rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
+  html += F(".led h3{margin:0 0 0.5rem;font-size:0.95rem;color:#cbd5e1;}");
+  html += F(".led-row{display:flex;align-items:center;justify-content:space-between;margin:0.3rem 0;font-size:0.9rem;}");
+  html += F(".dot{display:inline-block;width:0.65rem;height:0.65rem;border-radius:50%;margin-right:0.4rem;vertical-align:middle;}");
+  html += F(".dot-on{background:#22c55e;box-shadow:0 0 4px #22c55e;} .dot-off{background:#475569;}");
+  html += F(".led-btn{padding:0.35rem 0.7rem;border-radius:0.4rem;text-decoration:none;font-size:0.82rem;font-weight:600;}");
+  html += F(".b-on{background:#16a34a;color:#fff;} .b-off{background:#64748b;color:#fff;} .b-seq{background:#2563eb;color:#fff;}");
+  html += F(".led-all{display:flex;gap:0.5rem;margin-top:0.55rem;} .led-all a{flex:1;text-align:center;}");
+  html += F(".sched{margin-top:1rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
+  html += F(".sched h3{margin:0 0 0.5rem;font-size:0.95rem;color:#cbd5e1;}");
+  html += F(".sched form{margin-top:0.4rem;}");
+  html += F(".sched .g{display:grid;grid-template-columns:1fr 1fr;gap:0.45rem;}");
+  html += F(".sched label{font-size:0.78rem;color:#94a3b8;display:block;}");
+  html += F(".sched select,.sched input{width:100%;padding:0.38rem;border-radius:0.4rem;border:1px solid #334155;background:#111827;color:#e2e8f0;}");
+  html += F(".sched button{margin-top:0.55rem;padding:0.45rem 0.7rem;border:none;border-radius:0.4rem;background:#2563eb;color:#fff;font-weight:600;}");
+  html += F(".sum{margin-top:0.7rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
+  html += F(".sum h3{margin:0 0 0.45rem;font-size:0.95rem;color:#cbd5e1;}");
+  html += F(".sum .r{font-size:0.82rem;color:#cbd5e1;line-height:1.45;margin:0.15rem 0;}");
   html += F("</style></head><body>");
 
   html += F("<div class=\"nav\">");
@@ -363,6 +640,77 @@ void handleRoot() {
     html += F("<p class=\"hint\">Web: sadece bu sayfa. Yenileme 1 sn.</p>");
   }
 
+  html += F("<div class=\"led\"><h3>LED Kontrol</h3>");
+  html += F("<div class=\"led-row\"><span><span class=\"dot ");
+  html += g_relayStrip ? F("dot-on") : F("dot-off");
+  html += F("\"></span>Serit LED</span>");
+  html += F("<a class=\"led-btn ");
+  html += g_relayStrip ? F("b-off\" href=\"/led?t=strip&s=off\">Kapat") : F("b-on\" href=\"/led?t=strip&s=on\">Ac");
+  html += F("</a></div>");
+  html += F("<div class=\"led-row\"><span><span class=\"dot ");
+  html += g_relayDrop ? F("dot-on") : F("dot-off");
+  html += F("\"></span>Damla LED</span>");
+  html += F("<a class=\"led-btn ");
+  html += g_relayDrop ? F("b-off\" href=\"/led?t=drop&s=off\">Kapat") : F("b-on\" href=\"/led?t=drop&s=on\">Ac");
+  html += F("</a></div>");
+  html += F("<div class=\"led-row\"><span><span class=\"dot ");
+  html += g_relayAux ? F("dot-on") : F("dot-off");
+  html += F("\"></span>Role 3</span>");
+  html += F("<a class=\"led-btn ");
+  html += g_relayAux ? F("b-off\" href=\"/led?t=aux&s=off\">Kapat") : F("b-on\" href=\"/led?t=aux&s=on\">Ac");
+  html += F("</a></div>");
+  html += F("<div class=\"led-all\">");
+  html += F("<a class=\"led-btn b-seq\" href=\"/led?all=on\">Hepsi Ac (sirali)</a>");
+  html += F("<a class=\"led-btn b-off\" href=\"/led?all=off\">Hepsi Kapat</a>");
+  html += F("</div></div>");
+
+  html += F("<div class=\"sched\"><h3>Saate Gore</h3><form method=\"POST\" action=\"/sched/save\">");
+  html += F("<input type=\"hidden\" name=\"type\" value=\"win\">");
+  html += F("<div class=\"g\">");
+  html += F("<div><label>Role</label><select name=\"relay\">");
+  html += F("<option value=\"0\"");
+  if (cfgWinRelay == 0) html += F(" selected");
+  html += F(">Serit LED</option><option value=\"1\"");
+  if (cfgWinRelay == 1) html += F(" selected");
+  html += F(">Damla LED</option><option value=\"2\"");
+  if (cfgWinRelay == 2) html += F(" selected");
+  html += F(">Role 3</option></select></div>");
+  html += F("<div><label>Durum</label><select name=\"enabled\"><option value=\"0\"");
+  if (!cfgWinEnabled) html += F(" selected");
+  html += F(">Pasif</option><option value=\"1\"");
+  if (cfgWinEnabled) html += F(" selected");
+  html += F(">Aktif</option></select></div>");
+  html += F("<div><label>Saat</label><input type=\"time\" name=\"start\" value=\"");
+  html += formatMinutesToTime(cfgWinAtMin);
+  html += F("\"></div>");
+  html += F("</div><button type=\"submit\">Saate Gore Kaydet</button></form></div>");
+  html += F("<form method=\"POST\" action=\"/sched/save\" style=\"margin-top:0.35rem;\">");
+  html += F("<input type=\"hidden\" name=\"type\" value=\"win\"><input type=\"hidden\" name=\"clear\" value=\"1\">");
+  html += F("<button type=\"submit\" style=\"background:#64748b;\">Saate Gore Listeyi Temizle</button></form>");
+
+  html += F("<div class=\"sum\"><h3>Kayitli Senaryolar</h3>");
+  html += F("<div class=\"r\" style=\"color:#94a3b8;\">Saate Gore kurallar:</div>");
+  if (gWinRuleCount == 0) {
+    html += F("<div class=\"r\">- yok</div>");
+  } else {
+    for (int i = 0; i < gWinRuleCount; i++) {
+      html += F("<div class=\"r\">#");
+      html += String(i + 1);
+      html += F(" ");
+      if (gWinRuleRelay[i] == 0) html += F("Serit LED");
+      else if (gWinRuleRelay[i] == 1) html += F("Damla LED");
+      else html += F("Role 3");
+      html += F(" | ");
+      html += gWinRuleEnabled[i] ? F("Aktif") : F("Pasif");
+      html += F(" | ");
+      html += formatMinutesToTime(gWinRuleAtMin[i]);
+      html += F("</div>");
+    }
+  }
+  html += F("<div class=\"r\" style=\"color:#94a3b8;\">Maksimum kural sayisi: ");
+  html += String(MAX_SCHED_RULES);
+  html += F(" (dolunca en eski kural dusurulur).</div></div>");
+
   html += F("<p class=\"hint\"><a href=\"/settings\" style=\"color:#60a5fa;\">Ayarlar/Kalibrasyon</a> | <a href=\"/ota\" style=\"color:#60a5fa;\">Firmware OTA</a></p>");
   html += F("</body></html>");
   server.send(200, "text/html", html);
@@ -370,20 +718,26 @@ void handleRoot() {
 
 void handleSettingsPage() {
   String html;
-  html.reserve(4200);
+  html.reserve(5600);
   html += F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
   html += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
   html += F("<title>Ayarlar</title>");
   html += F("<style>body{font-family:system-ui,sans-serif;margin:1rem;background:#0f172a;color:#e2e8f0;max-width:32rem;}");
   html += F("label{display:block;margin-top:0.7rem;color:#94a3b8;}input{width:100%;padding:0.5rem;border-radius:0.45rem;border:1px solid #334155;background:#111827;color:#e2e8f0;}");
   html += F(".grid{display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;}button{margin-top:1rem;padding:0.6rem 1rem;border:none;border-radius:0.5rem;background:#3b82f6;color:#fff;font-weight:600;}");
+  html += F(".grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;}");
+  html += F(".card{background:#111827;border:1px solid #1f2937;border-radius:0.55rem;padding:0.65rem;margin:0.7rem 0;}");
+  html += F(".card h3{margin:0 0 0.45rem 0;font-size:0.92rem;color:#cbd5e1;}");
+  html += F(".d{font-size:0.85rem;line-height:1.45;color:#cbd5e1;}");
   html += F(".btn-danger{background:#b91c1c;} .row{display:flex;gap:0.6rem;flex-wrap:wrap;}");
   html += F("a{color:#60a5fa;} .hint{font-size:0.85rem;color:#94a3b8;line-height:1.35;}</style></head><body>");
   html += F("<h1 style=\"font-size:1.1rem;\">Kalici Ayarlar (NVS)</h1>");
+  html += F("<div class=\"card\"><h3>Canli Debug Ozeti</h3>");
+  html += F("<div class=\"d\">RAW: <span id=\"dbg-raw\">0</span> | PPM: <span id=\"dbg-ppm\">0</span> | EC: <span id=\"dbg-ec\">0</span> uS</div>");
+  html += F("<div class=\"d\">pH: <span id=\"dbg-ph\">0</span> | pV: <span id=\"dbg-pv\">0</span> | pA: <span id=\"dbg-pa\">0</span></div>");
+  html += F("<script>function updDbg(){fetch('/dbg').then(r=>r.json()).then(j=>{document.getElementById('dbg-raw').textContent=j.raw;document.getElementById('dbg-ppm').textContent=j.ppm;document.getElementById('dbg-ec').textContent=j.ec;document.getElementById('dbg-ph').textContent=j.ph.toFixed(2);document.getElementById('dbg-pv').textContent=j.pv.toFixed(3);document.getElementById('dbg-pa').textContent=j.pa;}).catch(()=>{});}setInterval(updDbg,1000);updDbg();</script>");
+  html += F("</div>");
   html += F("<form method=\"POST\" action=\"/settings/save\">");
-  html += F("<label>EC uS/PPM faktor</label><input name=\"ecf\" type=\"number\" step=\"0.0001\" value=\"");
-  html += String(cfgEcUsPerPpm, 4);
-  html += F("\">");
   html += F("<div class=\"grid\">");
   html += F("<div><label>pH4 voltaj</label><input name=\"ph4\" type=\"number\" step=\"0.0001\" value=\"");
   html += String(cfgPhCalV4, 4);
@@ -394,6 +748,7 @@ void handleSettingsPage() {
   html += F("<div><label>pH10 voltaj</label><input name=\"ph10\" type=\"number\" step=\"0.0001\" value=\"");
   html += String(cfgPhCalV10, 4);
   html += F("\"></div></div>");
+  html += F("<p class=\"hint\">pH kalibrasyon girisi: probu pH4/pH7/pH10 sivisina daldir, debug ekranda gorunen pV (voltaj) degerini ilgili kutuya yaz.</p>");
   html += F("<h2 style=\"font-size:1rem;margin-top:1rem;\">Saha duzeltmesi (besin/kabin suyu)</h2>");
   html += F("<p class=\"hint\">Buffer sonrasi besin/kabin suyunda sapma icin: pH = pH*olcek+ofset; EC(uS)=EC*olcek+ofset. Ornek: olcek=1, ofset= el_cihaz-ESP_pH.</p>");
   html += F("<div class=\"grid\">");
@@ -409,9 +764,10 @@ void handleSettingsPage() {
   html += F("<div><label>EC ofset (uS)</label><input name=\"ec_off\" type=\"number\" step=\"1\" value=\"");
   html += String(cfgEcOffset, 0);
   html += F("\"></div></div>");
-  html += F("<h2 style=\"font-size:1rem;margin-top:1rem;\">TDS RAW->PPM noktalar</h2>");
+  html += F("<h2 style=\"font-size:1rem;margin-top:1rem;\">Kalibrasyon noktalar (RAW + cihaz PPM + cihaz EC)</h2>");
+  html += F("<p class=\"hint\">Her noktada ayni anda 3 deger gir: ESP RAW, el cihazinin PPM'i ve el cihazinin EC(uS) degeri.</p>");
   for (int i = 0; i < CAL_POINTS; i++) {
-    html += F("<div class=\"grid\"><div><label>RAW ");
+    html += F("<div class=\"grid3\"><div><label>RAW ");
     html += String(i + 1);
     html += F("</label><input name=\"r");
     html += String(i);
@@ -423,6 +779,12 @@ void handleSettingsPage() {
     html += String(i);
     html += F("\" type=\"number\" step=\"0.01\" value=\"");
     html += String(cfgPpmPoints[i], 2);
+    html += F("\"></div><div><label>Cihaz EC ");
+    html += String(i + 1);
+    html += F(" (uS)</label><input name=\"e");
+    html += String(i);
+    html += F("\" type=\"number\" step=\"0.01\" value=\"");
+    html += String(cfgEcPoints[i], 2);
     html += F("\"></div></div>");
   }
   html += F("<div class=\"row\"><button type=\"submit\">Kaydet</button></form>");
@@ -435,7 +797,6 @@ void handleSettingsPage() {
 }
 
 void handleSettingsSave() {
-  if (server.hasArg("ecf")) cfgEcUsPerPpm = server.arg("ecf").toFloat();
   if (server.hasArg("ph4")) cfgPhCalV4 = server.arg("ph4").toFloat();
   if (server.hasArg("ph7")) cfgPhCalV7 = server.arg("ph7").toFloat();
   if (server.hasArg("ph10")) cfgPhCalV10 = server.arg("ph10").toFloat();
@@ -443,8 +804,10 @@ void handleSettingsSave() {
   for (int i = 0; i < CAL_POINTS; i++) {
     String rk = "r" + String(i);
     String pk = "p" + String(i);
+    String ek = "e" + String(i);
     if (server.hasArg(rk)) cfgRawPoints[i] = server.arg(rk).toFloat();
     if (server.hasArg(pk)) cfgPpmPoints[i] = server.arg(pk).toFloat();
+    if (server.hasArg(ek)) cfgEcPoints[i] = server.arg(ek).toFloat();
   }
 
   if (server.hasArg("ph_scale")) cfgPhScale = server.arg("ph_scale").toFloat();
@@ -463,6 +826,100 @@ void handleSettingsReset() {
   saveSettings();
   forceRefresh = true;
   server.sendHeader("Location", "/settings");
+  server.send(303, "text/plain", "");
+}
+
+void handleDebugJson() {
+  // Settings sayfasindaki canli debug karti icin JSON endpoint
+  String json;
+  json.reserve(220);
+  json += F("{");
+  json += F("\"raw\":");
+  json += String((int)g_tdsRaw);
+  json += F(",\"ppm\":");
+  json += String((int)g_tdsPpm);
+  json += F(",\"ec\":");
+  json += String((int)g_ecUsCm);
+  json += F(",\"ph\":");
+  json += String(g_ph, 2);
+  json += F(",\"pv\":");
+  json += String(g_phV, 3);
+  json += F(",\"pa\":");
+  json += String((int)g_phAdc);
+  json += F("}");
+  server.send(200, "application/json", json);
+}
+
+void handleScheduleSave() {
+  String type = server.hasArg("type") ? server.arg("type") : "";
+  type.toLowerCase();
+
+  if (type == "win") {
+    if (server.hasArg("relay")) cfgWinRelay = constrain(server.arg("relay").toInt(), 0, 2);
+    if (server.hasArg("enabled")) cfgWinEnabled = constrain(server.arg("enabled").toInt(), 0, 1);
+    if (server.hasArg("start")) cfgWinAtMin = parseTimeArgToMinutes(server.arg("start"), cfgWinAtMin);
+    if (server.hasArg("clear") && server.arg("clear") == "1") {
+      gWinRuleCount = 0;
+    } else if (gWinRuleCount < MAX_SCHED_RULES) {
+      gWinRuleRelay[gWinRuleCount] = cfgWinRelay;
+      gWinRuleEnabled[gWinRuleCount] = cfgWinEnabled;
+      gWinRuleAtMin[gWinRuleCount] = cfgWinAtMin;
+      gWinRuleCount++;
+    } else {
+      // Dolunca en eskiyi at, yeniyi sona ekle
+      for (int i = 1; i < MAX_SCHED_RULES; i++) {
+        gWinRuleRelay[i - 1] = gWinRuleRelay[i];
+        gWinRuleEnabled[i - 1] = gWinRuleEnabled[i];
+        gWinRuleAtMin[i - 1] = gWinRuleAtMin[i];
+      }
+      gWinRuleRelay[MAX_SCHED_RULES - 1] = cfgWinRelay;
+      gWinRuleEnabled[MAX_SCHED_RULES - 1] = cfgWinEnabled;
+      gWinRuleAtMin[MAX_SCHED_RULES - 1] = cfgWinAtMin;
+    }
+    g_manualOverrideUntilMs[cfgWinRelay] = 0;  // Yeni kural kaydinda scheduler hemen devreye girsin
+  }
+
+  saveSettings();
+  applyAuxSchedulerIfNeeded();  // Aktif kural varsa kayit sonrasi hemen uygula
+  forceRefresh = true;
+  server.sendHeader("Location", "/");
+  server.send(303, "text/plain", "");
+}
+
+void handleLed() {
+  String t = server.hasArg("t") ? server.arg("t") : "";
+  String s = server.hasArg("s") ? server.arg("s") : "";
+  String all = server.hasArg("all") ? server.arg("all") : "";
+  t.toLowerCase();
+  s.toLowerCase();
+  all.toLowerCase();
+
+  if (all == "on") {
+    sequentialStartLeds();
+    g_manualOverrideUntilMs[0] = millis() + MANUAL_OVERRIDE_MS;
+    g_manualOverrideUntilMs[1] = millis() + MANUAL_OVERRIDE_MS;
+    g_manualOverrideUntilMs[2] = millis() + MANUAL_OVERRIDE_MS;
+  } else if (all == "off") {
+    allLedsOff();
+    g_manualOverrideUntilMs[0] = millis() + MANUAL_OVERRIDE_MS;
+    g_manualOverrideUntilMs[1] = millis() + MANUAL_OVERRIDE_MS;
+    g_manualOverrideUntilMs[2] = millis() + MANUAL_OVERRIDE_MS;
+  } else if (t == "strip") {
+    bool target = (s == "toggle") ? !g_relayStrip : (s == "on");
+    setRelayStrip(target);
+    g_manualOverrideUntilMs[0] = millis() + MANUAL_OVERRIDE_MS;
+  } else if (t == "drop") {
+    bool target = (s == "toggle") ? !g_relayDrop : (s == "on");
+    setRelayDrop(target);
+    g_manualOverrideUntilMs[1] = millis() + MANUAL_OVERRIDE_MS;
+  } else if (t == "aux") {
+    bool target = (s == "toggle") ? !g_relayAux : (s == "on");
+    setRelayAux(target);
+    g_manualOverrideUntilMs[2] = millis() + MANUAL_OVERRIDE_MS;
+  }
+
+  forceRefresh = true;
+  server.sendHeader("Location", "/");
   server.send(303, "text/plain", "");
 }
 
@@ -532,8 +989,12 @@ static void registerHttpRoutesIfNeeded() {
   server.on("/settings", HTTP_GET, handleSettingsPage);
   server.on("/settings/save", HTTP_POST, handleSettingsSave);
   server.on("/settings/reset", HTTP_POST, handleSettingsReset);
+  server.on("/dbg", HTTP_GET, handleDebugJson);
+  server.on("/sched/save", HTTP_POST, handleScheduleSave);
   server.on("/ota", HTTP_GET, handleOtaPage);
   server.on("/update", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUpload);
+  server.on("/led", HTTP_GET, handleLed);
+  server.on("/led", HTTP_POST, handleLed);
 }
 
 static void startNetworkStack() {
@@ -607,6 +1068,9 @@ static void maintainWifi() {
 
 void setup() {
   Serial.begin(115200);
+  bootMs = millis();
+  lastRelayPersistMs = millis();
+  g_bootRelayRestoreDone = false;
   loadSettings();
 
   // ESP32 default I2C pins set explicitly for clarity
@@ -617,6 +1081,22 @@ void setup() {
   pinMode(TDS_PIN, INPUT);
   pinMode(PH_PIN, INPUT);
   pinMode(MODE_BTN_PIN, INPUT_PULLUP);
+
+  // Roleler: once OFF seviyesini yaz, sonra OUTPUT'a al. Boot sirasinda
+  // pinin kisa floating/LOW anini bu sekilde maskeliyoruz (active-LOW rolelerde
+  // aksi halde aciliyor anlik).
+  digitalWrite(RELAY_STRIP_PIN, relayLevel(false));
+  digitalWrite(RELAY_DROP_PIN, relayLevel(false));
+  digitalWrite(RELAY_AUX_PIN, relayLevel(false));
+  pinMode(RELAY_STRIP_PIN, OUTPUT);
+  pinMode(RELAY_DROP_PIN, OUTPUT);
+  pinMode(RELAY_AUX_PIN, OUTPUT);
+  digitalWrite(RELAY_STRIP_PIN, relayLevel(false));
+  digitalWrite(RELAY_DROP_PIN, relayLevel(false));
+  digitalWrite(RELAY_AUX_PIN, relayLevel(false));
+  g_relayStrip = false;
+  g_relayDrop = false;
+  g_relayAux = false;
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
     Serial.println("OLED baslatilamadi");
@@ -635,6 +1115,8 @@ void setup() {
   display.display();
 
   Serial.println("OLED mesaj yazdirildi");
+
+  Serial.println(F("LED'ler boot'ta kapali baslatildi (brownout korumasi)."));
 
   if (strlen(WIFI_SSID) == 0) {
     g_wifiOk = false;
@@ -665,6 +1147,13 @@ void loop() {
     server.handleClient();
   }
 
+  if (!g_bootRelayRestoreDone && millis() - bootMs > 3000) {
+    restoreLastRelayStatesSequentially();
+  }
+
+  applyAuxSchedulerIfNeeded();
+  persistRelayStatesIfNeeded();
+
   bool buttonState = digitalRead(MODE_BTN_PIN);
   if (buttonState == LOW && lastButtonState == HIGH && millis() - lastButtonMs > 250) {
     debugMode = !debugMode;
@@ -683,7 +1172,7 @@ void loop() {
     float voltage = 0.0;
     float tdsRawPpm = readTdsPpm(avgAdc, voltage);
     float tdsCalPpm = rawToPpmCalibrated(tdsRawPpm);
-    float ecBuf = tdsCalPpm * cfgEcUsPerPpm;
+    float ecBuf = rawToEcCalibrated(tdsRawPpm);
     float ecUsCm = ecBuf * cfgEcScale + cfgEcOffset;
     if (ecUsCm < 0.0f) ecUsCm = 0.0f;
 
@@ -754,6 +1243,13 @@ void loop() {
       display.setCursor(0, OLED_STATUS_H + 24);
       display.print("EC:");
       display.println((int)g_ecUsCm);
+      display.setCursor(0, SCREEN_HEIGHT - 8);
+      display.print("LED S:");
+      display.print(g_relayStrip ? "ON " : "OFF");
+      display.print(" D:");
+      display.print(g_relayDrop ? "ON " : "OFF");
+      display.print(" R3:");
+      display.print(g_relayAux ? "ON" : "OFF");
     } else {
       display.setTextSize(1);
       display.setCursor(0, OLED_STATUS_H);

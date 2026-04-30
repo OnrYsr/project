@@ -5,8 +5,19 @@ Bu proje ESP32 ile su kalitesi takibi yapar:
 - `EC (uS/cm)`
 - `pH`
 - OLED ekranda anlik gosterim
+- 3 kanalli role kontrolu (serit LED, damla LED, pompa/role3)
+- Webden saat bazli otomasyon (tek tetik kural listesi)
 
 Kod dosyasi: `esp32_oled_status.ino`
+
+## Guncel ozet (son durum)
+
+- **Role pinleri:** `GPIO32` (Serit LED), `GPIO33` (Damla LED), `GPIO26` (Role 3/Pompa)
+- **Boot davranisi:** Cihaz acilisinda roleler once `OFF` baslar; sonra NVS'teki son role durumlari **sirali** geri yuklenir (ani akim/kilitlenme riskini azaltir).
+- **Saat bazli otomasyon:** Ana sayfada **Saate Gore** bolumu vardir. Her kural `Role + Durum(Aktif/Pasif) + Saat` seklindedir. Saat gelince roleye tek komut uygulanir.
+- **Kural listesi:** Birden fazla saat kurali eklenebilir (maks. 8), NVS'te kalicidir, restart sonrasi korunur.
+- **Manuel override:** Webden manuel role ac/kapa yapildiginda scheduler ilgili roleye kisa sure (varsayilan 15 dk) dokunmaz. Yeni kural kaydinda override sifirlanir.
+- **Kalibrasyon formati:** TDS/EC kalibrasyonu 6 noktada `RAW + Cihaz PPM + Cihaz EC(uS)` seklinde girilir.
 
 ## Surum notlari
 
@@ -94,6 +105,9 @@ Kodda `OTA_HOSTNAME` (varsayilan `hydro-esp32`) ve `OTA_PASSWORD` (varsayilan `h
 - TDS analog cikis -> GPIO `34`
 - pH analog cikis -> GPIO `35`
 - Mod degisim butonu -> GPIO `27` (diger ucu GND)
+- Role 1 (Serit LED) -> GPIO `32`
+- Role 2 (Damla LED) -> GPIO `33`
+- Role 3 (Pompa/Aux) -> GPIO `26`
 - Tum GND hatlari ortak olmali
 
 ## Ekran Bilgileri
@@ -113,6 +127,7 @@ Olcum ve guncelleme:
 - OLED **NORMAL** gorunumu: **1 saniyede** bir cizilir (web ile ayni guncel veri).
 - OLED **DEBUG** gorunumu: **1 saniyede** bir cizilir.
 - Web sayfasi: Normal gorunum **3 sn**, Debug **1 sn** meta-refresh (veri yine 1 sn'de bir ESP'de yenilenir).
+- Not: Ana sayfada scheduler formlari rahat doldurulsun diye normal gorunumde otomatik refresh kapatilidir; debug tarafi 1 sn gunceldir.
 
 ## TDS/EC Kalibrasyon Notlari
 
