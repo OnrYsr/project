@@ -129,7 +129,7 @@ float cfgEcPoints[CAL_POINTS];
 int cfgWinEnabled = 0;           // saate gore ac/kapa aktif mi
 int cfgWinRelay = 2;             // 0: serit, 1: damla, 2: role3
 int cfgWinAtMin = 15 * 60;
-const int MAX_SCHED_RULES = 8;
+const int MAX_SCHED_RULES = 64;
 int gWinRuleCount = 0;
 int gWinRuleRelay[MAX_SCHED_RULES];
 int gWinRuleEnabled[MAX_SCHED_RULES];
@@ -359,6 +359,12 @@ static int wifiSignalBars() {
   return 0;
 }
 
+static String relayNameById(int relayId) {
+  if (relayId == 0) return "SunLig";
+  if (relayId == 1) return "GrowLig";
+  return "Su Mot.";
+}
+
 static void drawOledStatusBar() {
   const int baselineY = OLED_STATUS_H - 1;
   const uint8_t bw = 2;
@@ -570,33 +576,55 @@ void handleRoot() {
   html += F("<title>Hydro Monitor</title>");
   html += F("<style>");
   html += F("body{font-family:system-ui,sans-serif;margin:1rem auto;padding:0 0.5rem;background:#0f172a;color:#e2e8f0;max-width:62rem;}");
-  html += F(".nav{display:flex;gap:0.5rem;margin-bottom:1rem;}");
-  html += F(".nav a{flex:1;text-align:center;padding:0.55rem 0.4rem;border-radius:0.5rem;text-decoration:none;font-weight:600;font-size:0.9rem;}");
+  html += F(".nav{display:flex;justify-content:flex-end;gap:0.35rem;margin-bottom:0.55rem;}");
+  html += F(".nav a{text-align:center;padding:0.32rem 0.5rem;border-radius:0.45rem;text-decoration:none;font-weight:600;font-size:0.72rem;min-width:4.4rem;}");
   html += F(".nav a.on{background:#3b82f6;color:#fff;}");
   html += F(".nav a.off{background:#334155;color:#cbd5e1;}");
   html += F(".ok{color:#4ade80;font-size:0.8rem;margin-bottom:0.75rem;} .bad{color:#f87171;font-size:0.8rem;margin-bottom:0.75rem;}");
   html += F(".n-ph{font-size:1.85rem;font-weight:700;margin:0.35rem 0 0.15rem;} .n-ec{font-size:1.85rem;font-weight:700;margin:0.35rem 0;}");
   html += F(".n-lab{color:#94a3b8;font-size:0.95rem;}");
+  html += F(".n-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.55rem;margin-top:0.25rem;}");
+  html += F(".n-item{background:#1e293b;border-radius:0.5rem;padding:0.55rem 0.6rem;}");
+  html += F(".dbg-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.55rem;margin-top:0.25rem;}");
+  html += F(".dbg-card{background:#1e293b;border-radius:0.5rem;padding:0.55rem 0.6rem;}");
+  html += F(".dbg-title{font-size:0.78rem;color:#94a3b8;margin-bottom:0.35rem;}");
+  html += F(".dbg-val{font-size:1.18rem;font-weight:700;line-height:1.2;margin:0.08rem 0;}");
+  html += F(".dbg-sub{font-size:0.82rem;color:#cbd5e1;line-height:1.3;margin:0.08rem 0;}");
   html += F(".d-row{margin:0.35rem 0;font-size:1rem;line-height:1.35;} .d-lab{color:#94a3b8;display:inline-block;min-width:4.2rem;}");
   html += F(".hint{color:#64748b;font-size:0.78rem;margin-top:1rem;line-height:1.35;}");
   html += F(".led{margin-top:1rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
-  html += F(".led h3{margin:0 0 0.5rem;font-size:0.95rem;color:#cbd5e1;}");
+  html += F(".led h3{margin:0;font-size:0.95rem;color:#cbd5e1;}");
+  html += F(".led-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:0.55rem;}");
+  html += F(".led-head-actions{display:flex;gap:0.35rem;}");
+  html += F(".led-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.7rem;align-items:start;}");
+  html += F(".led-card{width:100%;max-width:10.2rem;aspect-ratio:1/1;background:#0f172a;border:1px solid #334155;border-radius:0.5rem;padding:0.45rem;display:flex;flex-direction:column;justify-content:space-between;}");
+  html += F(".led-card:nth-child(1){justify-self:start;} .led-card:nth-child(2){justify-self:center;} .led-card:nth-child(3){justify-self:end;}");
+  html += F(".led-name{font-size:0.82rem;color:#cbd5e1;margin-bottom:0.3rem;display:flex;align-items:center;}");
+  html += F(".led-actions{display:flex;gap:0.35rem;width:100%;}");
   html += F(".led-row{display:flex;align-items:center;justify-content:space-between;margin:0.3rem 0;font-size:0.9rem;}");
   html += F(".dot{display:inline-block;width:0.65rem;height:0.65rem;border-radius:50%;margin-right:0.4rem;vertical-align:middle;}");
   html += F(".dot-on{background:#22c55e;box-shadow:0 0 4px #22c55e;} .dot-off{background:#475569;}");
-  html += F(".led-btn{padding:0.35rem 0.7rem;border-radius:0.4rem;text-decoration:none;font-size:0.82rem;font-weight:600;}");
+  html += F(".led-btn{display:inline-block;min-width:4.2rem;text-align:center;padding:0.35rem 0.7rem;border-radius:0.4rem;text-decoration:none;font-size:0.82rem;font-weight:600;}");
+  html += F(".led-actions .led-btn{flex:1;min-width:0;padding:0.32rem 0.25rem;}");
   html += F(".b-on{background:#16a34a;color:#fff;} .b-off{background:#64748b;color:#fff;} .b-seq{background:#2563eb;color:#fff;}");
   html += F(".led-all{display:flex;gap:0.5rem;margin-top:0.55rem;} .led-all a{flex:1;text-align:center;}");
   html += F(".sched{margin-top:1rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
   html += F(".sched h3{margin:0 0 0.5rem;font-size:0.95rem;color:#cbd5e1;}");
   html += F(".sched form{margin-top:0.4rem;}");
-  html += F(".sched .g{display:grid;grid-template-columns:1fr 1fr;gap:0.45rem;}");
+  html += F(".sched .g{display:grid;grid-template-columns:1.05fr 0.9fr 0.9fr auto;gap:0.4rem;align-items:end;}");
   html += F(".sched label{font-size:0.78rem;color:#94a3b8;display:block;}");
-  html += F(".sched select,.sched input{width:100%;padding:0.38rem;border-radius:0.4rem;border:1px solid #334155;background:#111827;color:#e2e8f0;}");
-  html += F(".sched button{margin-top:0.55rem;padding:0.45rem 0.7rem;border:none;border-radius:0.4rem;background:#2563eb;color:#fff;font-weight:600;}");
+  html += F(".sched select,.sched input{width:100%;max-width:10rem;padding:0.33rem;border-radius:0.4rem;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.82rem;}");
+  html += F(".sched input[type=time]{-webkit-appearance:none;appearance:none;background:#111827;color:#e2e8f0;border:1px solid #334155;border-radius:0.4rem;min-height:2.05rem;color-scheme:dark;}");
+  html += F(".sched input[type=time]::-webkit-calendar-picker-indicator{filter:invert(0.9);opacity:0.9;}");
+  html += F(".sched input[type=time]::-webkit-datetime-edit,.sched input[type=time]::-webkit-datetime-edit-fields-wrapper,.sched input[type=time]::-webkit-datetime-edit-hour-field,.sched input[type=time]::-webkit-datetime-edit-minute-field{color:#e2e8f0;}");
+  html += F(".sched button{padding:0.45rem 0.7rem;border:none;border-radius:0.4rem;background:#2563eb;color:#fff;font-weight:600;}");
   html += F(".sum{margin-top:0.7rem;padding:0.7rem;background:#1e293b;border-radius:0.55rem;}");
   html += F(".sum h3{margin:0 0 0.45rem;font-size:0.95rem;color:#cbd5e1;}");
   html += F(".sum .r{font-size:0.82rem;color:#cbd5e1;line-height:1.45;margin:0.15rem 0;}");
+  html += F(".rule-line{display:grid;grid-template-columns:1.1fr 0.9fr 0.85fr auto auto;gap:0.35rem;align-items:end;margin:0.25rem 0 0.55rem;}");
+  html += F(".rule-line select,.rule-line input{max-width:none;padding:0.3rem;border-radius:0.35rem;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.8rem;}");
+  html += F(".rule-line button{padding:0.3rem 0.55rem;border:none;border-radius:0.35rem;color:#fff;font-size:0.78rem;}");
+  html += F(".btn-save{background:#2563eb;} .btn-del{background:#b91c1c;}");
   html += F("</style></head><body>");
 
   html += F("<div class=\"nav\">");
@@ -619,49 +647,70 @@ void handleRoot() {
   html += F(" (NTP, TRT)</div>");
 
   if (!webDebug) {
-    html += F("<div class=\"n-lab\">pH</div>");
-    html += F("<div class=\"n-ph\">"); html += String(g_ph, 2); html += F("</div>");
-    html += F("<div class=\"n-lab\" style=\"margin-top:0.6rem;\">EC</div>");
-    html += F("<div class=\"n-ec\">"); html += String((int)g_ecUsCm); html += F(" uS/cm</div>");
+    html += F("<div class=\"n-grid\">");
+    html += F("<div class=\"n-item\"><div class=\"n-lab\">pH</div><div class=\"n-ph\">");
+    html += String(g_ph, 2);
+    html += F("</div></div>");
+    html += F("<div class=\"n-item\"><div class=\"n-lab\">EC</div><div class=\"n-ec\">");
+    html += String((int)g_ecUsCm);
+    html += F(" uS/cm</div></div></div>");
     html += F("<p class=\"hint\">Web: sadece bu sayfa (OLED'i degistirmez). Yenileme 3 sn.</p>");
     html += F("<p class=\"hint\">OLED cihaz: ");
     html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL");
     html += F(" (buton)</p>");
   } else {
-    html += F("<div class=\"d-row\"><span class=\"d-lab\">RAW</span>"); html += String((int)g_tdsRaw); html += F("</div>");
-    html += F("<div class=\"d-row\"><span class=\"d-lab\">TDS</span>"); html += String((int)g_tdsPpm); html += F(" ppm</div>");
-    html += F("<div class=\"d-row\"><span class=\"d-lab\">EC</span>"); html += String((int)g_ecUsCm); html += F(" uS</div>");
-    html += F("<div class=\"d-row\"><span class=\"d-lab\">pH</span>"); html += String(g_ph, 2);
-    html += F(" <span style=\"color:#64748b;\">pA:</span> "); html += String((int)g_phAdc); html += F("</div>");
-    html += F("<div class=\"d-row\"><span class=\"d-lab\">pV</span>"); html += String(g_phV, 3); html += F("</div>");
+    uint32_t heapTotalKb = ESP.getHeapSize() / 1024;
+    uint32_t heapFreeKb = ESP.getFreeHeap() / 1024;
+    uint32_t heapUsedKb = heapTotalKb > heapFreeKb ? (heapTotalKb - heapFreeKb) : 0;
+    html += F("<div class=\"dbg-grid\">");
+    html += F("<div class=\"dbg-card\"><div class=\"dbg-title\">pH / pV</div>");
+    html += F("<div class=\"dbg-val\">"); html += String(g_ph, 2); html += F("</div>");
+    html += F("<div class=\"dbg-sub\">pV: "); html += String(g_phV, 3);
+    html += F(" | pA: "); html += String((int)g_phAdc); html += F("</div></div>");
+    html += F("<div class=\"dbg-card\"><div class=\"dbg-title\">EC / TDS</div>");
+    html += F("<div class=\"dbg-val\">"); html += String((int)g_ecUsCm); html += F(" uS</div>");
+    html += F("<div class=\"dbg-sub\">TDS: "); html += String((int)g_tdsPpm); html += F(" ppm</div></div>");
+    html += F("<div class=\"dbg-card\"><div class=\"dbg-title\">RAW</div>");
+    html += F("<div class=\"dbg-val\">"); html += String((int)g_tdsRaw); html += F("</div>");
+    html += F("<div class=\"dbg-sub\">Heap: ");
+    html += String(heapTotalKb);
+    html += F("KB / ");
+    html += String(heapUsedKb);
+    html += F("KB (mevcut/kullanilan)</div></div></div>");
     html += F("<div class=\"d-row\" style=\"margin-top:0.5rem;color:#64748b;font-size:0.85rem;\">OLED cihaz: ");
     html += g_debugModeSnapshot ? F("DEBUG") : F("NORMAL");
     html += F(" (buton)</div>");
     html += F("<p class=\"hint\">Web: sadece bu sayfa. Yenileme 1 sn.</p>");
   }
 
-  html += F("<div class=\"led\"><h3>LED Kontrol</h3>");
-  html += F("<div class=\"led-row\"><span><span class=\"dot ");
+  if (!webDebug) {
+  html += F("<div class=\"led\">");
+  html += F("<div class=\"led-head\"><h3>LED Kontrol</h3><div class=\"led-head-actions\">");
+  html += F("<a class=\"led-btn b-seq\" href=\"/led?all=on\">On</a>");
+  html += F("<a class=\"led-btn b-off\" href=\"/led?all=off\">Off</a>");
+  html += F("</div></div>");
+  html += F("<div class=\"led-grid\">");
+
+  html += F("<div class=\"led-card\"><div class=\"led-name\"><span class=\"dot ");
   html += g_relayStrip ? F("dot-on") : F("dot-off");
-  html += F("\"></span>Serit LED</span>");
-  html += F("<a class=\"led-btn ");
-  html += g_relayStrip ? F("b-off\" href=\"/led?t=strip&s=off\">Kapat") : F("b-on\" href=\"/led?t=strip&s=on\">Ac");
-  html += F("</a></div>");
-  html += F("<div class=\"led-row\"><span><span class=\"dot ");
+  html += F("\"></span>SunLig</div><div class=\"led-actions\">");
+  html += F("<a class=\"led-btn b-on\" href=\"/led?t=strip&s=on\">On</a>");
+  html += F("<a class=\"led-btn b-off\" href=\"/led?t=strip&s=off\">Off</a>");
+  html += F("</div></div>");
+
+  html += F("<div class=\"led-card\"><div class=\"led-name\"><span class=\"dot ");
   html += g_relayDrop ? F("dot-on") : F("dot-off");
-  html += F("\"></span>Damla LED</span>");
-  html += F("<a class=\"led-btn ");
-  html += g_relayDrop ? F("b-off\" href=\"/led?t=drop&s=off\">Kapat") : F("b-on\" href=\"/led?t=drop&s=on\">Ac");
-  html += F("</a></div>");
-  html += F("<div class=\"led-row\"><span><span class=\"dot ");
+  html += F("\"></span>GrowLig</div><div class=\"led-actions\">");
+  html += F("<a class=\"led-btn b-on\" href=\"/led?t=drop&s=on\">On</a>");
+  html += F("<a class=\"led-btn b-off\" href=\"/led?t=drop&s=off\">Off</a>");
+  html += F("</div></div>");
+
+  html += F("<div class=\"led-card\"><div class=\"led-name\"><span class=\"dot ");
   html += g_relayAux ? F("dot-on") : F("dot-off");
-  html += F("\"></span>Role 3</span>");
-  html += F("<a class=\"led-btn ");
-  html += g_relayAux ? F("b-off\" href=\"/led?t=aux&s=off\">Kapat") : F("b-on\" href=\"/led?t=aux&s=on\">Ac");
-  html += F("</a></div>");
-  html += F("<div class=\"led-all\">");
-  html += F("<a class=\"led-btn b-seq\" href=\"/led?all=on\">Hepsi Ac (sirali)</a>");
-  html += F("<a class=\"led-btn b-off\" href=\"/led?all=off\">Hepsi Kapat</a>");
+  html += F("\"></span>Su Mot.</div><div class=\"led-actions\">");
+  html += F("<a class=\"led-btn b-on\" href=\"/led?t=aux&s=on\">On</a>");
+  html += F("<a class=\"led-btn b-off\" href=\"/led?t=aux&s=off\">Off</a>");
+  html += F("</div></div>");
   html += F("</div></div>");
 
   html += F("<div class=\"sched\"><h3>Saate Gore</h3><form method=\"POST\" action=\"/sched/save\">");
@@ -670,11 +719,11 @@ void handleRoot() {
   html += F("<div><label>Role</label><select name=\"relay\">");
   html += F("<option value=\"0\"");
   if (cfgWinRelay == 0) html += F(" selected");
-  html += F(">Serit LED</option><option value=\"1\"");
+  html += F(">SunLig</option><option value=\"1\"");
   if (cfgWinRelay == 1) html += F(" selected");
-  html += F(">Damla LED</option><option value=\"2\"");
+  html += F(">GrowLig</option><option value=\"2\"");
   if (cfgWinRelay == 2) html += F(" selected");
-  html += F(">Role 3</option></select></div>");
+  html += F(">Su Mot.</option></select></div>");
   html += F("<div><label>Durum</label><select name=\"enabled\"><option value=\"0\"");
   if (!cfgWinEnabled) html += F(" selected");
   html += F(">Pasif</option><option value=\"1\"");
@@ -683,35 +732,51 @@ void handleRoot() {
   html += F("<div><label>Saat</label><input type=\"time\" name=\"start\" value=\"");
   html += formatMinutesToTime(cfgWinAtMin);
   html += F("\"></div>");
-  html += F("</div><button type=\"submit\">Saate Gore Kaydet</button></form></div>");
-  html += F("<form method=\"POST\" action=\"/sched/save\" style=\"margin-top:0.35rem;\">");
-  html += F("<input type=\"hidden\" name=\"type\" value=\"win\"><input type=\"hidden\" name=\"clear\" value=\"1\">");
-  html += F("<button type=\"submit\" style=\"background:#64748b;\">Saate Gore Listeyi Temizle</button></form>");
-
+  html += F("<div><label>&nbsp;</label><button type=\"submit\">Kaydet</button></div>");
+  html += F("</div></form></div>");
   html += F("<div class=\"sum\"><h3>Kayitli Senaryolar</h3>");
-  html += F("<div class=\"r\" style=\"color:#94a3b8;\">Saate Gore kurallar:</div>");
   if (gWinRuleCount == 0) {
     html += F("<div class=\"r\">- yok</div>");
   } else {
     for (int i = 0; i < gWinRuleCount; i++) {
-      html += F("<div class=\"r\">#");
-      html += String(i + 1);
-      html += F(" ");
-      if (gWinRuleRelay[i] == 0) html += F("Serit LED");
-      else if (gWinRuleRelay[i] == 1) html += F("Damla LED");
-      else html += F("Role 3");
-      html += F(" | ");
-      html += gWinRuleEnabled[i] ? F("Aktif") : F("Pasif");
-      html += F(" | ");
+      html += F("<form method=\"POST\" action=\"/sched/rule\" class=\"rule-line\" id=\"rule-");
+      html += String(i);
+      html += F("\">");
+      html += F("<input type=\"hidden\" name=\"type\" value=\"win\">");
+      html += F("<input type=\"hidden\" name=\"idx\" value=\"");
+      html += String(i);
+      html += F("\">");
+      html += F("<select name=\"relay\" disabled>");
+      html += F("<option value=\"0\"");
+      if (gWinRuleRelay[i] == 0) html += F(" selected");
+      html += F(">SunLig</option><option value=\"1\"");
+      if (gWinRuleRelay[i] == 1) html += F(" selected");
+      html += F(">GrowLig</option><option value=\"2\"");
+      if (gWinRuleRelay[i] == 2) html += F(" selected");
+      html += F(">Su Mot.</option></select>");
+      html += F("<select name=\"enabled\" disabled>");
+      html += F("<option value=\"0\"");
+      if (!gWinRuleEnabled[i]) html += F(" selected");
+      html += F(">Pasif</option><option value=\"1\"");
+      if (gWinRuleEnabled[i]) html += F(" selected");
+      html += F(">Aktif</option></select>");
+      html += F("<input type=\"time\" name=\"at\" value=\"");
       html += formatMinutesToTime(gWinRuleAtMin[i]);
-      html += F("</div>");
+      html += F("\" disabled>");
+      html += F("<button type=\"button\" class=\"btn-save\" data-editing=\"0\" onclick=\"toggleRuleEdit(");
+      html += String(i);
+      html += F(")\">Guncelle</button>");
+      html += F("<button type=\"submit\" name=\"delete\" value=\"1\" class=\"btn-del\">Sil</button>");
+      html += F("</form>");
     }
   }
-  html += F("<div class=\"r\" style=\"color:#94a3b8;\">Maksimum kural sayisi: ");
-  html += String(MAX_SCHED_RULES);
-  html += F(" (dolunca en eski kural dusurulur).</div></div>");
+  html += F("</div>");
+  html += F("<script>function toggleRuleEdit(i){const f=document.getElementById('rule-'+i);if(!f)return;const b=f.querySelector('.btn-save');if(!b)return;const fields=f.querySelectorAll('select,input[type=time]');const editing=b.getAttribute('data-editing')==='1';if(!editing){fields.forEach(el=>el.disabled=false);b.setAttribute('data-editing','1');b.textContent='Kaydet';return;}f.submit();}</script>");
+  }
 
-  html += F("<p class=\"hint\"><a href=\"/settings\" style=\"color:#60a5fa;\">Ayarlar/Kalibrasyon</a> | <a href=\"/ota\" style=\"color:#60a5fa;\">Firmware OTA</a></p>");
+  if (webDebug) {
+    html += F("<p class=\"hint\"><a href=\"/settings\" style=\"color:#60a5fa;\">Ayarlar/Kalibrasyon</a> | <a href=\"/ota\" style=\"color:#60a5fa;\">Firmware OTA</a></p>");
+  }
   html += F("</body></html>");
   server.send(200, "text/html", html);
 }
@@ -846,6 +911,8 @@ void handleDebugJson() {
   json += String(g_phV, 3);
   json += F(",\"pa\":");
   json += String((int)g_phAdc);
+  json += F(",\"heap\":");
+  json += String((int)(ESP.getFreeHeap() / 1024));
   json += F("}");
   server.send(200, "application/json", json);
 }
@@ -865,22 +932,42 @@ void handleScheduleSave() {
       gWinRuleEnabled[gWinRuleCount] = cfgWinEnabled;
       gWinRuleAtMin[gWinRuleCount] = cfgWinAtMin;
       gWinRuleCount++;
-    } else {
-      // Dolunca en eskiyi at, yeniyi sona ekle
-      for (int i = 1; i < MAX_SCHED_RULES; i++) {
-        gWinRuleRelay[i - 1] = gWinRuleRelay[i];
-        gWinRuleEnabled[i - 1] = gWinRuleEnabled[i];
-        gWinRuleAtMin[i - 1] = gWinRuleAtMin[i];
-      }
-      gWinRuleRelay[MAX_SCHED_RULES - 1] = cfgWinRelay;
-      gWinRuleEnabled[MAX_SCHED_RULES - 1] = cfgWinEnabled;
-      gWinRuleAtMin[MAX_SCHED_RULES - 1] = cfgWinAtMin;
     }
     g_manualOverrideUntilMs[cfgWinRelay] = 0;  // Yeni kural kaydinda scheduler hemen devreye girsin
   }
 
   saveSettings();
   applyAuxSchedulerIfNeeded();  // Aktif kural varsa kayit sonrasi hemen uygula
+  forceRefresh = true;
+  server.sendHeader("Location", "/");
+  server.send(303, "text/plain", "");
+}
+
+void handleScheduleRuleAction() {
+  String type = server.hasArg("type") ? server.arg("type") : "";
+  type.toLowerCase();
+  int idx = server.hasArg("idx") ? server.arg("idx").toInt() : -1;
+  if (type == "win" && idx >= 0 && idx < gWinRuleCount) {
+    if (server.hasArg("delete") && server.arg("delete") == "1") {
+      for (int i = idx + 1; i < gWinRuleCount; i++) {
+        gWinRuleRelay[i - 1] = gWinRuleRelay[i];
+        gWinRuleEnabled[i - 1] = gWinRuleEnabled[i];
+        gWinRuleAtMin[i - 1] = gWinRuleAtMin[i];
+      }
+      gWinRuleCount--;
+    } else {
+      if (server.hasArg("relay")) gWinRuleRelay[idx] = constrain(server.arg("relay").toInt(), 0, 2);
+      if (server.hasArg("enabled")) {
+        gWinRuleEnabled[idx] = constrain(server.arg("enabled").toInt(), 0, 1);
+      }
+      if (server.hasArg("at")) {
+        gWinRuleAtMin[idx] = parseTimeArgToMinutes(server.arg("at"), gWinRuleAtMin[idx]);
+      }
+      g_manualOverrideUntilMs[constrain(gWinRuleRelay[idx], 0, 2)] = 0;
+    }
+  }
+  saveSettings();
+  applyAuxSchedulerIfNeeded();
   forceRefresh = true;
   server.sendHeader("Location", "/");
   server.send(303, "text/plain", "");
@@ -991,6 +1078,7 @@ static void registerHttpRoutesIfNeeded() {
   server.on("/settings/reset", HTTP_POST, handleSettingsReset);
   server.on("/dbg", HTTP_GET, handleDebugJson);
   server.on("/sched/save", HTTP_POST, handleScheduleSave);
+  server.on("/sched/rule", HTTP_POST, handleScheduleRuleAction);
   server.on("/ota", HTTP_GET, handleOtaPage);
   server.on("/update", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUpload);
   server.on("/led", HTTP_GET, handleLed);

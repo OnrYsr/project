@@ -18,6 +18,10 @@ Kod dosyasi: `esp32_oled_status.ino`
 - **Kural listesi:** Birden fazla saat kurali eklenebilir (maks. 8), NVS'te kalicidir, restart sonrasi korunur.
 - **Manuel override:** Webden manuel role ac/kapa yapildiginda scheduler ilgili roleye kisa sure (varsayilan 15 dk) dokunmaz. Yeni kural kaydinda override sifirlanir.
 - **Kalibrasyon formati:** TDS/EC kalibrasyonu 6 noktada `RAW + Cihaz PPM + Cihaz EC(uS)` seklinde girilir.
+- **Dashboard adlandirma:** Role isimleri arayuzde `SunLig`, `GrowLig`, `Su Mot.` olarak gosterilir.
+- **LED kartlari:** Ana sayfada 3 kartli kontrol vardir; her kartta `On/Off`, ustte toplu `On/Off`.
+- **Debug web gorunumu:** Sadece olcum ve sistem degerleri (RAW/TDS/EC/pH/pV/pA/Heap) gosterilir; kontrol ve senaryo bloklari gizlenir.
+- **Saatli senaryo mantigi:** Kural `Role + Durum + Saat` seklinde tek tetikleyicidir; bitis saati yoktur. Farkli saatte ters durum icin ikinci kural eklenir.
 
 ## Surum notlari
 
